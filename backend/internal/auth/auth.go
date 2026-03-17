@@ -13,11 +13,12 @@ import (
 )
 
 type Service struct {
-	db *sql.DB
+	db        *sql.DB
+	masterKey []byte
 }
 
-func NewService(db *sql.DB) *Service {
-	return &Service{db: db}
+func NewService(db *sql.DB, masterKey []byte) *Service {
+	return &Service{db: db, masterKey: masterKey}
 }
 
 func (s *Service) Register(username, password string) (*models.User, error) {
@@ -69,12 +70,18 @@ func (s *Service) Login(username, password string) (*models.Session, error) {
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	// Derive encryption key from password
+	// Derive credential encryption key from password
 	encryptionKey, err := crypto.DeriveKey(password, user.EncryptionKeySalt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive encryption key: %w", err)
 	}
 	encryptionKeyB64 := base64.StdEncoding.EncodeToString(encryptionKey)
+
+	// Wrap the key with the server master key so DB contents alone cannot decrypt credentials
+	wrappedKey, err := crypto.Encrypt(encryptionKeyB64, s.masterKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to wrap encryption key: %w", err)
+	}
 
 	token, err := generateToken()
 	if err != nil {
@@ -89,7 +96,7 @@ func (s *Service) Login(username, password string) (*models.Session, error) {
 	expiresAt := time.Now().Add(24 * time.Hour)
 	_, err = s.db.Exec(
 		"INSERT INTO sessions (token, user_id, encryption_key, csrf_token, expires_at) VALUES (?, ?, ?, ?, ?)",
-		token, user.ID, encryptionKeyB64, csrfToken, expiresAt,
+		token, user.ID, wrappedKey, csrfToken, expiresAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
@@ -106,13 +113,14 @@ func (s *Service) Login(username, password string) (*models.Session, error) {
 
 func (s *Service) ValidateSession(token string) (*models.User, error) {
 	var user models.User
+	var wrappedKey string
 	err := s.db.QueryRow(`
 		SELECT u.id, u.username, u.encryption_key_salt, s.encryption_key, s.csrf_token
 		FROM users u
 		JOIN sessions s ON u.id = s.user_id
 		WHERE s.token = ? AND s.expires_at > ?
 	`, token, time.Now()).Scan(
-		&user.ID, &user.Username, &user.EncryptionKeySalt, &user.EncryptionKey, &user.CSRFToken,
+		&user.ID, &user.Username, &user.EncryptionKeySalt, &wrappedKey, &user.CSRFToken,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -120,6 +128,13 @@ func (s *Service) ValidateSession(token string) (*models.User, error) {
 		}
 		return nil, err
 	}
+
+	// Unwrap the encryption key using the server master key
+	encryptionKeyB64, err := crypto.Decrypt(wrappedKey, s.masterKey)
+	if err != nil {
+		return nil, fmt.Errorf("invalid or expired session")
+	}
+	user.EncryptionKey = encryptionKeyB64
 
 	return &user, nil
 }

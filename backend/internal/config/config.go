@@ -11,6 +11,7 @@ type Config struct {
 	TLSKeyPath   string
 	EnableTLS    bool
 	HTTPAddr     string
+	MasterSecret string
 }
 
 func Load() *Config {
@@ -26,6 +27,7 @@ func Load() *Config {
 		TLSKeyPath:   getEnv("TLS_KEY", ""),
 		EnableTLS:    enableTLS,
 		HTTPAddr:     getEnv("HTTP_ADDR", ":8080"),
+		MasterSecret: getEnv("MASTER_SECRET", ""),
 	}
 }
 

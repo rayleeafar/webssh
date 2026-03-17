@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"log"
 	"net/http"
 	"strings"
@@ -15,6 +16,39 @@ import (
 	"github.com/webssh/manager/internal/ssh"
 )
 
+// deriveMasterKey converts the MASTER_SECRET env string into a 32-byte AES key.
+// If the secret is empty, a weak fallback is used and a warning is logged.
+func deriveMasterKey(secret string) []byte {
+	if secret == "" {
+		log.Println("WARNING: MASTER_SECRET env var not set. Set a strong secret in production.")
+		secret = "dev-only-insecure-default-do-not-use-in-production"
+	}
+	h := sha256.Sum256([]byte(secret))
+	return h[:]
+}
+
+// buildRedirectHandler returns an HTTP handler that redirects all requests to
+// the HTTPS address formed from httpsPort (e.g. ":8443").
+func buildRedirectHandler(httpsPort string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		// Strip port from the incoming Host header
+		if colonIdx := strings.LastIndex(host, ":"); colonIdx != -1 {
+			host = host[:colonIdx]
+		}
+		target := "https://" + host + httpsPort + r.RequestURI
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
+	})
+}
+
+// buildHSTSHandler wraps a handler to add the HSTS header on every response.
+func buildHSTSHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	cfg := config.Load()
 
@@ -24,7 +58,9 @@ func main() {
 	}
 	defer db.Close()
 
-	authService := auth.NewService(db)
+	masterKey := deriveMasterKey(cfg.MasterSecret)
+
+	authService := auth.NewService(db, masterKey)
 	authHandler := handlers.NewAuthHandler(authService, cfg.EnableTLS)
 	nodeHandler := handlers.NewNodeHandler(db)
 	terminalHandler := ssh.NewTerminalHandler(db, authService)
@@ -81,33 +117,19 @@ func main() {
 	if cfg.EnableTLS {
 		log.Printf("Starting HTTPS server on %s", addr)
 
-		httpsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-			handler.ServeHTTP(w, r)
-		})
+		// Extract port-only from addr (handles "0.0.0.0:8443" → ":8443")
+		httpsPort := addr
+		if colonIdx := strings.LastIndex(addr, ":"); colonIdx != -1 {
+			httpsPort = addr[colonIdx:]
+		}
 
 		go func() {
 			httpAddr := cfg.HTTPAddr
 			log.Printf("Starting HTTP redirect server on %s", httpAddr)
-
-			// Extract just the port from addr (e.g. "0.0.0.0:8443" → ":8443")
-			httpsPort := addr
-			if colonIdx := strings.LastIndex(addr, ":"); colonIdx != -1 {
-				httpsPort = addr[colonIdx:]
-			}
-
-			http.ListenAndServe(httpAddr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				host := r.Host
-				// Strip port from incoming Host header
-				if colonIdx := strings.LastIndex(host, ":"); colonIdx != -1 {
-					host = host[:colonIdx]
-				}
-				target := "https://" + host + httpsPort + r.RequestURI
-				http.Redirect(w, r, target, http.StatusMovedPermanently)
-			}))
+			http.ListenAndServe(httpAddr, buildRedirectHandler(httpsPort))
 		}()
 
-		if err := http.ListenAndServeTLS(addr, cfg.TLSCertPath, cfg.TLSKeyPath, httpsHandler); err != nil {
+		if err := http.ListenAndServeTLS(addr, cfg.TLSCertPath, cfg.TLSKeyPath, buildHSTSHandler(handler)); err != nil {
 			log.Fatalf("HTTPS server failed: %v", err)
 		}
 	} else {

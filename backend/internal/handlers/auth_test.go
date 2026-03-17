@@ -13,6 +13,9 @@ import (
 	"github.com/webssh/manager/internal/middleware"
 )
 
+// testMasterKey is a fixed 32-byte key used in all auth handler tests.
+var testMasterKey = []byte("test-master-key-for-unit-tests!!")
+
 func setupAuthTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := database.Initialize(":memory:")
@@ -21,6 +24,10 @@ func setupAuthTestDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	return db
+}
+
+func newTestAuthService(db *sql.DB) *auth.Service {
+	return auth.NewService(db, testMasterKey)
 }
 
 func registerUser(t *testing.T, svc *auth.Service, username, password string) {
@@ -76,7 +83,7 @@ func TestMeHandlerMethodNotAllowed(t *testing.T) {
 
 func TestRegisterSuccess(t *testing.T) {
 	db := setupAuthTestDB(t)
-	svc := auth.NewService(db)
+	svc := newTestAuthService(db)
 	h := NewAuthHandler(svc, false)
 
 	body, _ := json.Marshal(map[string]string{"username": "alice", "password": "secret"})
@@ -93,7 +100,7 @@ func TestRegisterSuccess(t *testing.T) {
 
 func TestRegisterDuplicateUsername(t *testing.T) {
 	db := setupAuthTestDB(t)
-	svc := auth.NewService(db)
+	svc := newTestAuthService(db)
 	h := NewAuthHandler(svc, false)
 	registerUser(t, svc, "alice", "secret")
 
@@ -113,7 +120,7 @@ func TestRegisterDuplicateUsername(t *testing.T) {
 
 func TestLoginSuccess(t *testing.T) {
 	db := setupAuthTestDB(t)
-	svc := auth.NewService(db)
+	svc := newTestAuthService(db)
 	h := NewAuthHandler(svc, false)
 	registerUser(t, svc, "alice", "secret")
 
@@ -153,7 +160,7 @@ func TestLoginSuccess(t *testing.T) {
 
 func TestLoginFailure(t *testing.T) {
 	db := setupAuthTestDB(t)
-	svc := auth.NewService(db)
+	svc := newTestAuthService(db)
 	h := NewAuthHandler(svc, false)
 
 	body, _ := json.Marshal(map[string]string{"username": "nouser", "password": "wrong"})
@@ -172,7 +179,7 @@ func TestLoginFailure(t *testing.T) {
 
 func TestMeUnauthenticated(t *testing.T) {
 	db := setupAuthTestDB(t)
-	svc := auth.NewService(db)
+	svc := newTestAuthService(db)
 	h := NewAuthHandler(svc, false)
 	authMW := middleware.AuthMiddleware(svc)
 
@@ -188,7 +195,7 @@ func TestMeUnauthenticated(t *testing.T) {
 
 func TestMeWithValidSession(t *testing.T) {
 	db := setupAuthTestDB(t)
-	svc := auth.NewService(db)
+	svc := newTestAuthService(db)
 	h := NewAuthHandler(svc, false)
 	authMW := middleware.AuthMiddleware(svc)
 	registerUser(t, svc, "alice", "secret")
@@ -221,7 +228,7 @@ func TestMeWithValidSession(t *testing.T) {
 
 func TestLogoutRevokesSession(t *testing.T) {
 	db := setupAuthTestDB(t)
-	svc := auth.NewService(db)
+	svc := newTestAuthService(db)
 	h := NewAuthHandler(svc, false)
 	authMW := middleware.AuthMiddleware(svc)
 	csrfMW := middleware.CSRFMiddleware
@@ -260,7 +267,7 @@ func TestLogoutRevokesSession(t *testing.T) {
 
 func TestCSRFRejectsInvalidToken(t *testing.T) {
 	db := setupAuthTestDB(t)
-	svc := auth.NewService(db)
+	svc := newTestAuthService(db)
 	authMW := middleware.AuthMiddleware(svc)
 	csrfMW := middleware.CSRFMiddleware
 	registerUser(t, svc, "alice", "secret")
@@ -289,7 +296,7 @@ func TestCSRFRejectsInvalidToken(t *testing.T) {
 
 func TestCSRFRejectsMissingToken(t *testing.T) {
 	db := setupAuthTestDB(t)
-	svc := auth.NewService(db)
+	svc := newTestAuthService(db)
 	authMW := middleware.AuthMiddleware(svc)
 	csrfMW := middleware.CSRFMiddleware
 	registerUser(t, svc, "alice", "secret")
@@ -311,7 +318,7 @@ func TestCSRFRejectsMissingToken(t *testing.T) {
 
 func TestCSRFAcceptsSessionBoundToken(t *testing.T) {
 	db := setupAuthTestDB(t)
-	svc := auth.NewService(db)
+	svc := newTestAuthService(db)
 	authMW := middleware.AuthMiddleware(svc)
 	csrfMW := middleware.CSRFMiddleware
 	registerUser(t, svc, "alice", "secret")
@@ -341,7 +348,7 @@ func TestCSRFAcceptsSessionBoundToken(t *testing.T) {
 func TestCSRFTokenIsBoundToSession(t *testing.T) {
 	// A token from session A must not work for session B
 	db := setupAuthTestDB(t)
-	svc := auth.NewService(db)
+	svc := newTestAuthService(db)
 	authMW := middleware.AuthMiddleware(svc)
 	csrfMW := middleware.CSRFMiddleware
 	registerUser(t, svc, "alice", "secret")

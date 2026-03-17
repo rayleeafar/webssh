@@ -245,6 +245,7 @@ export default function SFTPPage() {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Permissions</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Size</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Modified</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
@@ -256,6 +257,7 @@ export default function SFTPPage() {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className="text-blue-600">📁 ..</span>
                     </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
                     <td className="px-6 py-4 whitespace-nowrap">-</td>
                     <td className="px-6 py-4 whitespace-nowrap">-</td>
                     <td className="px-6 py-4 whitespace-nowrap">-</td>
@@ -270,6 +272,9 @@ export default function SFTPPage() {
                       <span className={file.is_dir ? 'text-blue-600' : ''}>
                         {file.is_dir ? '📁' : '📄'} {file.name}
                       </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">
+                      {file.mode}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {file.is_dir ? '-' : `${(file.size / 1024).toFixed(2)} KB`}
