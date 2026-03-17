@@ -47,7 +47,7 @@ export default function TerminalPage() {
 
       const resizeObserver = new ResizeObserver(() => {
         fitAddon.fit()
-        const dims = term.getDimensions()
+        const dims = fitAddon.proposeDimensions()
         if (dims) {
           const msg = new Uint8Array(5)
           msg[0] = 0
