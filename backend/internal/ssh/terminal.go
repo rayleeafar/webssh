@@ -28,13 +28,49 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+// sshSession is the interface for an SSH session used by HandleWebSocket.
+// Using an interface allows tests to inject a fake without a real SSH server.
+type sshSession interface {
+	RequestPty(term string, h, w int, modes ssh.TerminalModes) error
+	Shell() error
+	StdinPipe() (io.WriteCloser, error)
+	StdoutPipe() (io.Reader, error)
+	StderrPipe() (io.Reader, error)
+	WindowChange(h, w int) error
+	Close() error
+}
+
+// sshClientConn is the interface for an SSH client used by HandleWebSocket.
+type sshClientConn interface {
+	NewSession() (sshSession, error)
+	Close() error
+}
+
+// defaultSSHClientConn wraps *ssh.Client to implement sshClientConn.
+type defaultSSHClientConn struct{ c *ssh.Client }
+
+func (d *defaultSSHClientConn) NewSession() (sshSession, error) { return d.c.NewSession() }
+func (d *defaultSSHClientConn) Close() error                    { return d.c.Close() }
+
+// sshDialFunc is the injectable function for dialing an SSH server.
+type sshDialFunc func(network, addr string, config *ssh.ClientConfig) (sshClientConn, error)
+
+func defaultSSHDial(network, addr string, config *ssh.ClientConfig) (sshClientConn, error) {
+	c, err := ssh.Dial(network, addr, config)
+	if err != nil {
+		return nil, err
+	}
+	return &defaultSSHClientConn{c: c}, nil
+}
+
 type TerminalHandler struct {
 	db          *sql.DB
 	authService *auth.Service
+	dialSSH     sshDialFunc // nil falls back to defaultSSHDial
 }
 
 func NewTerminalHandler(db *sql.DB, authService *auth.Service) *TerminalHandler {
-	return &TerminalHandler{db: db, authService: authService}
+	return &TerminalHandler{db: db, authService: authService, dialSSH: defaultSSHDial}
 }
 
 func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -113,15 +149,19 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 
-	sshClient, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", host, port), sshConfig)
+	dialFn := h.dialSSH
+	if dialFn == nil {
+		dialFn = defaultSSHDial
+	}
+	client, err := dialFn("tcp", fmt.Sprintf("%s:%d", host, port), sshConfig)
 	if err != nil {
 		log.Printf("SSH connection failed for node %d: %v", nodeID, err)
 		conn.WriteMessage(websocket.TextMessage, []byte("SSH connection failed. Check node credentials and connectivity.\r\n"))
 		return
 	}
-	defer sshClient.Close()
+	defer client.Close()
 
-	session, err := sshClient.NewSession()
+	session, err := client.NewSession()
 	if err != nil {
 		conn.WriteMessage(websocket.TextMessage, []byte("Failed to create SSH session.\r\n"))
 		return

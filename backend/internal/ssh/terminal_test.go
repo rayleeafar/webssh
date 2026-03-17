@@ -2,16 +2,12 @@ package ssh
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"database/sql"
 	"encoding/base64"
-	"encoding/binary"
+	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -54,10 +50,8 @@ func TestHandleWebSocket_MissingNodeID(t *testing.T) {
 	user, _ := svc.ValidateSession(session.Token)
 
 	req := httptest.NewRequest(http.MethodGet, "/ws/terminal", nil)
-	// No nodeId param
 	req = requestWithUser(req, user)
 	w := httptest.NewRecorder()
-
 	h.HandleWebSocket(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -74,7 +68,6 @@ func TestHandleWebSocket_InvalidNodeID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/ws/terminal?nodeId=notanumber", nil)
 	req = requestWithUser(req, user)
 	w := httptest.NewRecorder()
-
 	h.HandleWebSocket(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -91,7 +84,6 @@ func TestHandleWebSocket_NodeNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/ws/terminal?nodeId=99999", nil)
 	req = requestWithUser(req, user)
 	w := httptest.NewRecorder()
-
 	h.HandleWebSocket(w, req)
 
 	if w.Code != http.StatusNotFound {
@@ -107,16 +99,13 @@ func TestHandleWebSocket_OwnershipViolation(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 	svc := auth.NewService(db, termTestMasterKey)
 
-	// Register two users
 	svc.Register("alice", "pass1")
 	svc.Register("bob", "pass2")
-
 	sessionAlice, _ := svc.Login("alice", "pass1")
 	sessionBob, _ := svc.Login("bob", "pass2")
 	userAlice, _ := svc.ValidateSession(sessionAlice.Token)
 	userBob, _ := svc.ValidateSession(sessionBob.Token)
 
-	// Create a node owned by Alice
 	aliceKey, _ := base64.StdEncoding.DecodeString(userAlice.EncryptionKey)
 	encrypted, _ := cryptoutil.Encrypt("sshpass", aliceKey)
 	credResult, _ := db.Exec(
@@ -130,12 +119,10 @@ func TestHandleWebSocket_OwnershipViolation(t *testing.T) {
 	)
 	nodeID, _ := nodeResult.LastInsertId()
 
-	// Bob tries to access Alice's node
 	h := NewTerminalHandler(db, svc)
 	req := httptest.NewRequest(http.MethodGet, "/ws/terminal?nodeId="+intToStr(int(nodeID)), nil)
 	req = requestWithUser(req, userBob)
 	w := httptest.NewRecorder()
-
 	h.HandleWebSocket(w, req)
 
 	if w.Code != http.StatusForbidden {
@@ -143,145 +130,75 @@ func TestHandleWebSocket_OwnershipViolation(t *testing.T) {
 	}
 }
 
-// --- In-process SSH test server ---
+// --- Fake SSH session implementation (no real network sockets) ---
 
-// windowChangeMsg records a terminal resize event received by the test SSH server.
-type windowChangeMsg struct {
-	Rows uint32
-	Cols uint32
+// fakeSSHSession is an in-memory sshSession for testing.
+// It writes "$ " to stdout (then EOF) and records WindowChange calls.
+type fakeSSHSession struct {
+	mu      sync.Mutex
+	resizes []windowSizeRecord
 }
 
-// testSSHServer is a minimal in-process SSH server for terminal handler tests.
-// It accepts any password credential and records terminal resize events.
-type testSSHServer struct {
-	listener net.Listener
-	config   *gossh.ServerConfig
-	mu       sync.Mutex
-	resizes  []windowChangeMsg
+type windowSizeRecord struct{ rows, cols int }
+
+// nopWriteCloser discards writes and is a no-op on Close.
+type nopWriteCloser struct{}
+
+func (nopWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
+func (nopWriteCloser) Close() error                { return nil }
+
+func (s *fakeSSHSession) RequestPty(_ string, _, _ int, _ gossh.TerminalModes) error {
+	return nil
 }
-
-func startTestSSHServer(t *testing.T) *testSSHServer {
-	t.Helper()
-
-	hostKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signer, err := gossh.NewSignerFromKey(hostKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	cfg := &gossh.ServerConfig{
-		PasswordCallback: func(_ gossh.ConnMetadata, _ []byte) (*gossh.Permissions, error) {
-			return &gossh.Permissions{}, nil
-		},
-	}
-	cfg.AddHostKey(signer)
-
-	l, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	s := &testSSHServer{listener: l, config: cfg}
-	t.Cleanup(func() { l.Close() })
-	go s.serve()
-	return s
+func (s *fakeSSHSession) Shell() error { return nil }
+func (s *fakeSSHSession) StdinPipe() (io.WriteCloser, error) {
+	return nopWriteCloser{}, nil
 }
-
-func (s *testSSHServer) Addr() string {
-	return s.listener.Addr().String()
+func (s *fakeSSHSession) StdoutPipe() (io.Reader, error) {
+	// Returns "$ " followed by EOF so the handler goroutine can read and then exit cleanly.
+	return strings.NewReader("$ "), nil
 }
+func (s *fakeSSHSession) StderrPipe() (io.Reader, error) {
+	return strings.NewReader(""), nil // immediate EOF
+}
+func (s *fakeSSHSession) WindowChange(rows, cols int) error {
+	s.mu.Lock()
+	s.resizes = append(s.resizes, windowSizeRecord{rows, cols})
+	s.mu.Unlock()
+	return nil
+}
+func (s *fakeSSHSession) Close() error { return nil }
 
-func (s *testSSHServer) RecordedResizes() []windowChangeMsg {
+func (s *fakeSSHSession) recordedResizes() []windowSizeRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]windowChangeMsg, len(s.resizes))
-	copy(out, s.resizes)
-	return out
+	cp := make([]windowSizeRecord, len(s.resizes))
+	copy(cp, s.resizes)
+	return cp
 }
 
-func (s *testSSHServer) serve() {
-	for {
-		conn, err := s.listener.Accept()
-		if err != nil {
-			return
-		}
-		go s.handleConn(conn)
-	}
-}
+// fakeSSHClientConn wraps a fakeSSHSession to implement sshClientConn.
+type fakeSSHClientConn struct{ sess *fakeSSHSession }
 
-func (s *testSSHServer) handleConn(conn net.Conn) {
-	sshConn, chans, reqs, err := gossh.NewServerConn(conn, s.config)
-	if err != nil {
-		return
-	}
-	defer sshConn.Close()
-	go gossh.DiscardRequests(reqs)
-	for newChan := range chans {
-		if newChan.ChannelType() != "session" {
-			newChan.Reject(gossh.UnknownChannelType, "")
-			continue
-		}
-		go s.handleSession(newChan)
+func (c *fakeSSHClientConn) NewSession() (sshSession, error) { return c.sess, nil }
+func (c *fakeSSHClientConn) Close() error                    { return nil }
+
+// fakeDial returns a dialer that immediately returns the given client.
+func fakeDial(client sshClientConn) sshDialFunc {
+	return func(_, _ string, _ *gossh.ClientConfig) (sshClientConn, error) {
+		return client, nil
 	}
 }
 
-func (s *testSSHServer) handleSession(newChan gossh.NewChannel) {
-	ch, reqs, err := newChan.Accept()
-	if err != nil {
-		return
-	}
-	defer ch.Close()
-
-	for req := range reqs {
-		switch req.Type {
-		case "pty-req":
-			req.Reply(true, nil)
-		case "window-change":
-			// RFC 4254 / golang.org/x/crypto/ssh ptyWindowChangeMsg layout:
-			// [0:4] Columns (uint32 BE), [4:8] Rows (uint32 BE)
-			if len(req.Payload) >= 8 {
-				cols := binary.BigEndian.Uint32(req.Payload[0:4])
-				rows := binary.BigEndian.Uint32(req.Payload[4:8])
-				s.mu.Lock()
-				s.resizes = append(s.resizes, windowChangeMsg{Rows: rows, Cols: cols})
-				s.mu.Unlock()
-			}
-			if req.WantReply {
-				req.Reply(true, nil)
-			}
-		case "shell":
-			req.Reply(true, nil)
-			// Write an initial prompt so the WebSocket client has something to read.
-			go func() {
-				_, _ = ch.Write([]byte("$ "))
-				io.Copy(io.Discard, ch)
-			}()
-		default:
-			if req.WantReply {
-				req.Reply(false, nil)
-			}
-		}
+// failDial returns a dialer that always fails with the given error.
+func failDial(msg string) sshDialFunc {
+	return func(_, _ string, _ *gossh.ClientConfig) (sshClientConn, error) {
+		return nil, fmt.Errorf("%s", msg)
 	}
 }
 
-// startIPv4Server creates an httptest.Server bound explicitly to 127.0.0.1 (IPv4).
-func startIPv4Server(t *testing.T, handler http.Handler) *httptest.Server {
-	t.Helper()
-	l, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := httptest.NewUnstartedServer(handler)
-	srv.Listener = l
-	srv.Start()
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-// insertNode creates a DB node pointing to host:port for the given user.
+// insertNode creates a DB node pointing to any host:port for the given user.
+// Used for tests that need a valid node row but don't make real SSH connections.
 func insertNode(t *testing.T, db *sql.DB, user *models.User, host string, port int) int {
 	t.Helper()
 	key, _ := base64.StdEncoding.DecodeString(user.EncryptionKey)
@@ -305,7 +222,7 @@ func insertNode(t *testing.T, db *sql.DB, user *models.User, host string, port i
 	return int(nodeID)
 }
 
-// --- SSH dial failure via real WebSocket ---
+// --- SSH dial failure via real WebSocket (uses httptest.NewServer, falls back to IPv6) ---
 
 func TestHandleWebSocket_SSHDialFailure(t *testing.T) {
 	db, err := database.Initialize(":memory:")
@@ -319,55 +236,40 @@ func TestHandleWebSocket_SSHDialFailure(t *testing.T) {
 	session, _ := svc.Login("alice", "pass1")
 	user, _ := svc.ValidateSession(session.Token)
 
-	// Create a node pointing to a port that has no SSH server
-	userKey, _ := base64.StdEncoding.DecodeString(user.EncryptionKey)
-	encrypted, _ := cryptoutil.Encrypt("sshpass", userKey)
-	credResult, _ := db.Exec(
-		"INSERT INTO credentials (user_id, auth_type, encrypted_value) VALUES (?, 'password', ?)",
-		user.ID, encrypted,
-	)
-	credID, _ := credResult.LastInsertId()
-	nodeResult, _ := db.Exec(
-		// Port 1 is reserved and almost never has a service
-		"INSERT INTO nodes (user_id, name, host, port, username, credential_id) VALUES (?, 'no-ssh', '127.0.0.1', 1, 'root', ?)",
-		user.ID, credID,
-	)
-	nodeID, _ := nodeResult.LastInsertId()
+	nodeID := insertNode(t, db, user, "127.0.0.1", 22)
 
 	h := NewTerminalHandler(db, svc)
+	h.dialSSH = failDial("connection refused")
+
 	authMW := middleware.AuthMiddleware(svc)
-	// Use IPv4-only listener to avoid IPv6 loopback binding in constrained environments.
-	srv := startIPv4Server(t, authMW(http.HandlerFunc(h.HandleWebSocket)))
+	srv := httptest.NewServer(authMW(http.HandlerFunc(h.HandleWebSocket)))
+	t.Cleanup(srv.Close)
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") +
-		"/ws/terminal?nodeId=" + intToStr(int(nodeID))
+		"/ws/terminal?nodeId=" + intToStr(nodeID)
+	header := http.Header{"Cookie": []string{"session_token=" + session.Token}}
 
-	header := http.Header{}
-	header.Add("Cookie", "session_token="+session.Token)
-	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, header)
-	if err != nil {
-		// Some SSH failures may cause a non-101 response; that's acceptable
+	conn, resp, dialErr := websocket.DefaultDialer.Dial(wsURL, header)
+	if dialErr != nil {
 		if resp != nil && resp.StatusCode != http.StatusSwitchingProtocols {
-			t.Logf("WebSocket dial got HTTP %d (SSH failure before upgrade may occur)", resp.StatusCode)
+			t.Logf("WebSocket dial got HTTP %d (SSH failure before upgrade)", resp.StatusCode)
 			return
 		}
-		t.Fatalf("unexpected dial error: %v", err)
+		t.Fatalf("unexpected dial error: %v", dialErr)
 	}
 	defer conn.Close()
 
-	// The handler dials SSH and writes a failure message to the WebSocket
 	_, msg, err := conn.ReadMessage()
 	if err != nil {
 		t.Fatalf("read from WebSocket failed: %v", err)
 	}
 	if !strings.Contains(string(msg), "SSH connection failed") &&
-		!strings.Contains(string(msg), "connection refused") &&
 		!strings.Contains(string(msg), "failed") {
 		t.Errorf("expected SSH failure message, got: %q", string(msg))
 	}
 }
 
-// --- Resize propagation test ---
+// --- Resize propagation test (uses fake SSH session — no net.Listen) ---
 
 func TestHandleWebSocket_ResizePropagation(t *testing.T) {
 	db, err := database.Initialize(":memory:")
@@ -381,15 +283,15 @@ func TestHandleWebSocket_ResizePropagation(t *testing.T) {
 	session, _ := svc.Login("alice", "pass1")
 	user, _ := svc.ValidateSession(session.Token)
 
-	sshSrv := startTestSSHServer(t)
-	host, portStr, _ := net.SplitHostPort(sshSrv.Addr())
-	port, _ := strconv.Atoi(portStr)
+	nodeID := insertNode(t, db, user, "127.0.0.1", 22)
 
-	nodeID := insertNode(t, db, user, host, port)
-
+	fakeSess := &fakeSSHSession{}
 	h := NewTerminalHandler(db, svc)
+	h.dialSSH = fakeDial(&fakeSSHClientConn{sess: fakeSess})
+
 	authMW := middleware.AuthMiddleware(svc)
-	srv := startIPv4Server(t, authMW(http.HandlerFunc(h.HandleWebSocket)))
+	srv := httptest.NewServer(authMW(http.HandlerFunc(h.HandleWebSocket)))
+	t.Cleanup(srv.Close)
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws/terminal?nodeId=" + intToStr(nodeID)
 	header := http.Header{"Cookie": []string{"session_token=" + session.Token}}
@@ -400,39 +302,37 @@ func TestHandleWebSocket_ResizePropagation(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// Read the initial shell prompt written by the test SSH server
+	// Read the initial "$ " prompt forwarded from fake stdout
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	_, _, err = conn.ReadMessage()
 	if err != nil {
 		t.Fatalf("failed to read initial prompt: %v", err)
 	}
-	conn.SetReadDeadline(time.Time{}) // reset
+	conn.SetReadDeadline(time.Time{})
 
-	// Send a terminal resize message: [0x00, rowsHi, rowsLo, colsHi, colsLo]
-	// The terminal handler decodes: rows = msg[1]<<8|msg[2], cols = msg[3]<<8|msg[4]
+	// Send terminal resize message: [0x00, rowsHi, rowsLo, colsHi, colsLo]
 	rows, cols := 40, 120
 	resizeMsg := []byte{0, byte(rows >> 8), byte(rows), byte(cols >> 8), byte(cols)}
 	if err := conn.WriteMessage(websocket.BinaryMessage, resizeMsg); err != nil {
 		t.Fatalf("failed to send resize message: %v", err)
 	}
 
-	// Allow time for the message to propagate through the SSH connection
-	time.Sleep(300 * time.Millisecond)
+	// Allow time for the message to flow through the handler goroutine
+	time.Sleep(100 * time.Millisecond)
 
-	resizes := sshSrv.RecordedResizes()
+	resizes := fakeSess.recordedResizes()
 	if len(resizes) == 0 {
-		t.Fatal("expected at least one resize event on the SSH server, got none")
+		t.Fatal("expected at least one resize event, got none")
 	}
 	last := resizes[len(resizes)-1]
-	if int(last.Rows) != rows || int(last.Cols) != cols {
-		t.Errorf("resize: got rows=%d cols=%d, want rows=%d cols=%d", last.Rows, last.Cols, rows, cols)
+	if last.rows != rows || last.cols != cols {
+		t.Errorf("resize: got rows=%d cols=%d, want rows=%d cols=%d",
+			last.rows, last.cols, rows, cols)
 	}
 }
 
-// --- Concurrent sessions test ---
+// --- Concurrent sessions test (uses fake SSH session — no net.Listen) ---
 
-// TestHandleWebSocket_ConcurrentSessions verifies that two simultaneous WebSocket
-// terminal sessions for different users operate independently without interference.
 func TestHandleWebSocket_ConcurrentSessions(t *testing.T) {
 	db, err := database.Initialize(":memory:")
 	if err != nil {
@@ -448,43 +348,38 @@ func TestHandleWebSocket_ConcurrentSessions(t *testing.T) {
 	userAlice, _ := svc.ValidateSession(sessAlice.Token)
 	userBob, _ := svc.ValidateSession(sessBob.Token)
 
-	sshSrv := startTestSSHServer(t)
-	host, portStr, _ := net.SplitHostPort(sshSrv.Addr())
-	port, _ := strconv.Atoi(portStr)
-
-	nodeAlice := insertNode(t, db, userAlice, host, port)
-	nodeBob := insertNode(t, db, userBob, host, port)
+	nodeAlice := insertNode(t, db, userAlice, "127.0.0.1", 22)
+	nodeBob := insertNode(t, db, userBob, "127.0.0.1", 22)
 
 	h := NewTerminalHandler(db, svc)
+	// Each dial call creates a fresh fakeSSHSession so sessions are independent.
+	h.dialSSH = func(_, _ string, _ *gossh.ClientConfig) (sshClientConn, error) {
+		return &fakeSSHClientConn{sess: &fakeSSHSession{}}, nil
+	}
+
 	authMW := middleware.AuthMiddleware(svc)
-	srv := startIPv4Server(t, authMW(http.HandlerFunc(h.HandleWebSocket)))
+	srv := httptest.NewServer(authMW(http.HandlerFunc(h.HandleWebSocket)))
+	t.Cleanup(srv.Close)
 
 	baseURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws/terminal?nodeId="
 
 	// Connect Alice's session
 	hdrAlice := http.Header{"Cookie": []string{"session_token=" + sessAlice.Token}}
-	connAlice, respAlice, dialErr := websocket.DefaultDialer.Dial(baseURL+intToStr(nodeAlice), hdrAlice)
-	if dialErr != nil {
-		if respAlice != nil {
-			t.Fatalf("Alice dial failed with HTTP %d: %v", respAlice.StatusCode, dialErr)
-		}
-		t.Fatalf("Alice dial failed: %v", dialErr)
+	connAlice, _, err := websocket.DefaultDialer.Dial(baseURL+intToStr(nodeAlice), hdrAlice)
+	if err != nil {
+		t.Fatalf("Alice dial failed: %v", err)
 	}
 	defer connAlice.Close()
 
 	// Connect Bob's session while Alice is still connected
 	hdrBob := http.Header{"Cookie": []string{"session_token=" + sessBob.Token}}
-	connBob, respBob, dialErr := websocket.DefaultDialer.Dial(baseURL+intToStr(nodeBob), hdrBob)
-	if dialErr != nil {
-		if respBob != nil {
-			t.Fatalf("Bob dial failed with HTTP %d: %v", respBob.StatusCode, dialErr)
-		}
-		t.Fatalf("Bob dial failed: %v", dialErr)
+	connBob, _, err := websocket.DefaultDialer.Dial(baseURL+intToStr(nodeBob), hdrBob)
+	if err != nil {
+		t.Fatalf("Bob dial failed: %v", err)
 	}
 	defer connBob.Close()
 
-	// Both sessions should receive an initial message from the SSH server independently
-	var wg sync.WaitGroup
+	// Both sessions should independently receive the fake "$ " initial message
 	type result struct {
 		name string
 		msg  []byte
@@ -492,6 +387,7 @@ func TestHandleWebSocket_ConcurrentSessions(t *testing.T) {
 	}
 	results := make(chan result, 2)
 
+	var wg sync.WaitGroup
 	readOne := func(name string, conn *websocket.Conn) {
 		defer wg.Done()
 		conn.SetReadDeadline(time.Now().Add(5 * time.Second))

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/pkg/sftp"
@@ -17,12 +18,57 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// sftpReadFile is the interface for an SFTP file opened for reading.
+// Using an interface allows tests to inject in-memory fakes.
+type sftpReadFile interface {
+	io.Reader
+	io.Closer
+	Stat() (os.FileInfo, error)
+}
+
+// sftpWriteFile is the interface for an SFTP file opened for writing.
+type sftpWriteFile interface {
+	io.Writer
+	io.Closer
+}
+
+// sftpClientIF wraps the *sftp.Client methods used by handlers.
+type sftpClientIF interface {
+	ReadDir(p string) ([]os.FileInfo, error)
+	Open(path string) (sftpReadFile, error)
+	Create(path string) (sftpWriteFile, error)
+	Stat(p string) (os.FileInfo, error)
+	Remove(path string) error
+	RemoveDirectory(path string) error
+	Mkdir(path string) error
+}
+
+// realSFTPClient wraps *sftp.Client to satisfy sftpClientIF.
+type realSFTPClient struct{ c *sftp.Client }
+
+func (r *realSFTPClient) ReadDir(p string) ([]os.FileInfo, error) { return r.c.ReadDir(p) }
+func (r *realSFTPClient) Open(path string) (sftpReadFile, error)  { return r.c.Open(path) }
+func (r *realSFTPClient) Create(path string) (sftpWriteFile, error) {
+	return r.c.Create(path)
+}
+func (r *realSFTPClient) Stat(p string) (os.FileInfo, error)    { return r.c.Stat(p) }
+func (r *realSFTPClient) Remove(path string) error              { return r.c.Remove(path) }
+func (r *realSFTPClient) RemoveDirectory(path string) error     { return r.c.RemoveDirectory(path) }
+func (r *realSFTPClient) Mkdir(path string) error               { return r.c.Mkdir(path) }
+
+// sftpClientFactory is the injectable function for obtaining an SFTP client.
+// Tests replace this with a factory that returns an in-memory fake.
+type sftpClientFactory func(nodeID, userID int, encryptionKey string) (sftpClientIF, func(), error)
+
 type SFTPHandler struct {
-	db *sql.DB
+	db        *sql.DB
+	newClient sftpClientFactory // injectable; defaults to getSFTPClient
 }
 
 func NewSFTPHandler(db *sql.DB) *SFTPHandler {
-	return &SFTPHandler{db: db}
+	h := &SFTPHandler{db: db}
+	h.newClient = h.getSFTPClient
+	return h
 }
 
 type FileInfo struct {
@@ -57,7 +103,7 @@ func (h *SFTPHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sftpClient, cleanup, err := h.getSFTPClient(nodeID, user.ID, user.EncryptionKey)
+	sftpClient, cleanup, err := h.newClient(nodeID, user.ID, user.EncryptionKey)
 	if err != nil {
 		log.Printf("SFTP connection failed for node %d: %v", nodeID, err)
 		http.Error(w, "Failed to connect to server", http.StatusInternalServerError)
@@ -108,7 +154,7 @@ func (h *SFTPHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sftpClient, cleanup, err := h.getSFTPClient(nodeID, user.ID, user.EncryptionKey)
+	sftpClient, cleanup, err := h.newClient(nodeID, user.ID, user.EncryptionKey)
 	if err != nil {
 		log.Printf("SFTP connection failed for node %d: %v", nodeID, err)
 		http.Error(w, "Failed to connect to server", http.StatusInternalServerError)
@@ -165,7 +211,7 @@ func (h *SFTPHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	sftpClient, cleanup, err := h.getSFTPClient(nodeID, user.ID, user.EncryptionKey)
+	sftpClient, cleanup, err := h.newClient(nodeID, user.ID, user.EncryptionKey)
 	if err != nil {
 		log.Printf("SFTP connection failed for node %d: %v", nodeID, err)
 		http.Error(w, "Failed to connect to server", http.StatusInternalServerError)
@@ -211,7 +257,7 @@ func (h *SFTPHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sftpClient, cleanup, err := h.getSFTPClient(nodeID, user.ID, user.EncryptionKey)
+	sftpClient, cleanup, err := h.newClient(nodeID, user.ID, user.EncryptionKey)
 	if err != nil {
 		log.Printf("SFTP connection failed for node %d: %v", nodeID, err)
 		http.Error(w, "Failed to connect to server", http.StatusInternalServerError)
@@ -268,7 +314,7 @@ func (h *SFTPHandler) Mkdir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sftpClient, cleanup, err := h.getSFTPClient(req.NodeID, user.ID, user.EncryptionKey)
+	sftpClient, cleanup, err := h.newClient(req.NodeID, user.ID, user.EncryptionKey)
 	if err != nil {
 		log.Printf("SFTP connection failed for node %d: %v", req.NodeID, err)
 		http.Error(w, "Failed to connect to server", http.StatusInternalServerError)
@@ -285,7 +331,7 @@ func (h *SFTPHandler) Mkdir(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-func (h *SFTPHandler) getSFTPClient(nodeID, userID int, encryptionKey string) (*sftp.Client, func(), error) {
+func (h *SFTPHandler) getSFTPClient(nodeID, userID int, encryptionKey string) (sftpClientIF, func(), error) {
 	var host, nodeUsername, encryptedCreds, authType string
 	var port, ownerID int
 
@@ -344,5 +390,5 @@ func (h *SFTPHandler) getSFTPClient(nodeID, userID int, encryptionKey string) (*
 		sshClient.Close()
 	}
 
-	return sftpClient, cleanup, nil
+	return &realSFTPClient{c: sftpClient}, cleanup, nil
 }
