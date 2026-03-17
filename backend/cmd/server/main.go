@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -17,14 +18,13 @@ import (
 )
 
 // deriveMasterKey converts the MASTER_SECRET env string into a 32-byte AES key.
-// If the secret is empty, a weak fallback is used and a warning is logged.
-func deriveMasterKey(secret string) []byte {
+// Returns an error if secret is empty so callers can fail fast.
+func deriveMasterKey(secret string) ([]byte, error) {
 	if secret == "" {
-		log.Println("WARNING: MASTER_SECRET env var not set. Set a strong secret in production.")
-		secret = "dev-only-insecure-default-do-not-use-in-production"
+		return nil, fmt.Errorf("MASTER_SECRET env var must be set — refusing to start with a predictable key")
 	}
 	h := sha256.Sum256([]byte(secret))
-	return h[:]
+	return h[:], nil
 }
 
 // buildRedirectHandler returns an HTTP handler that redirects all requests to
@@ -58,7 +58,10 @@ func main() {
 	}
 	defer db.Close()
 
-	masterKey := deriveMasterKey(cfg.MasterSecret)
+	masterKey, err := deriveMasterKey(cfg.MasterSecret)
+	if err != nil {
+		log.Fatalf("Failed to derive master key: %v", err)
+	}
 
 	authService := auth.NewService(db, masterKey)
 	authHandler := handlers.NewAuthHandler(authService, cfg.EnableTLS)

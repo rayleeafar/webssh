@@ -140,23 +140,33 @@ func TestBuildHSTSHandler_DelegatesResponse(t *testing.T) {
 // --- deriveMasterKey ---
 
 func TestDeriveMasterKey_NonEmptySecret(t *testing.T) {
-	k := deriveMasterKey("my-strong-secret")
+	k, err := deriveMasterKey("my-strong-secret")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(k) != 32 {
 		t.Errorf("expected 32-byte key, got %d bytes", len(k))
 	}
 }
 
+func TestDeriveMasterKey_EmptySecretFails(t *testing.T) {
+	_, err := deriveMasterKey("")
+	if err == nil {
+		t.Error("expected error when MASTER_SECRET is empty")
+	}
+}
+
 func TestDeriveMasterKey_DifferentSecretsDifferentKeys(t *testing.T) {
-	k1 := deriveMasterKey("secret-a")
-	k2 := deriveMasterKey("secret-b")
+	k1, _ := deriveMasterKey("secret-a")
+	k2, _ := deriveMasterKey("secret-b")
 	if string(k1) == string(k2) {
 		t.Error("different secrets must produce different master keys")
 	}
 }
 
 func TestDeriveMasterKey_SameSecretSameKey(t *testing.T) {
-	k1 := deriveMasterKey("consistent-secret")
-	k2 := deriveMasterKey("consistent-secret")
+	k1, _ := deriveMasterKey("consistent-secret")
+	k2, _ := deriveMasterKey("consistent-secret")
 	if string(k1) != string(k2) {
 		t.Error("same secret must always produce the same master key")
 	}
