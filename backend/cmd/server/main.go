@@ -9,6 +9,7 @@ import (
 	"github.com/webssh/manager/internal/database"
 	"github.com/webssh/manager/internal/handlers"
 	"github.com/webssh/manager/internal/middleware"
+	"github.com/webssh/manager/internal/sftp"
 	"github.com/webssh/manager/internal/ssh"
 )
 
@@ -25,6 +26,7 @@ func main() {
 	authHandler := handlers.NewAuthHandler(authService)
 	nodeHandler := handlers.NewNodeHandler(db)
 	terminalHandler := ssh.NewTerminalHandler(db, authService)
+	sftpHandler := sftp.NewSFTPHandler(db)
 
 	authMiddleware := middleware.AuthMiddleware(authService)
 
@@ -63,6 +65,12 @@ func main() {
 	})))
 
 	mux.Handle("/ws/terminal", authMiddleware(http.HandlerFunc(terminalHandler.HandleWebSocket)))
+
+	mux.Handle("/api/sftp/list", authMiddleware(http.HandlerFunc(sftpHandler.List)))
+	mux.Handle("/api/sftp/download", authMiddleware(http.HandlerFunc(sftpHandler.Download)))
+	mux.Handle("/api/sftp/upload", authMiddleware(http.HandlerFunc(sftpHandler.Upload)))
+	mux.Handle("/api/sftp/delete", authMiddleware(http.HandlerFunc(sftpHandler.Delete)))
+	mux.Handle("/api/sftp/mkdir", authMiddleware(http.HandlerFunc(sftpHandler.Mkdir)))
 
 	addr := cfg.ListenAddr
 	log.Printf("Starting server on %s", addr)
