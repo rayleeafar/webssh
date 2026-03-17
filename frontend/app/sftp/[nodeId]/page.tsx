@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { apiGet, apiDelete, apiRequest } from '@/lib/api'
+import { apiGet, apiPost, apiDelete, apiRequest } from '@/lib/api'
 
 interface FileInfo {
   name: string
@@ -19,6 +19,9 @@ export default function SFTPPage() {
   const [currentPath, setCurrentPath] = useState('.')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [showMkdirForm, setShowMkdirForm] = useState(false)
+  const [newDirName, setNewDirName] = useState('')
+  const [uploading, setUploading] = useState(false)
 
   useEffect(() => {
     fetchFiles(currentPath)
@@ -108,6 +111,61 @@ export default function SFTPPage() {
     }
   }
 
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setUploading(true)
+    setError('')
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('nodeId', params.nodeId as string)
+      formData.append('path', currentPath === '.' ? file.name : `${currentPath}/${file.name}`)
+
+      const res = await apiRequest('/api/sftp/upload', {
+        method: 'POST',
+        body: formData,
+        headers: {}, // Let browser set Content-Type with boundary
+      })
+
+      if (!res.ok) throw new Error('Upload failed')
+
+      fetchFiles(currentPath)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed')
+    } finally {
+      setUploading(false)
+      // Reset file input
+      e.target.value = ''
+    }
+  }
+
+  const handleMkdir = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newDirName.trim()) return
+
+    setError('')
+
+    try {
+      const dirPath = currentPath === '.' ? newDirName : `${currentPath}/${newDirName}`
+
+      const res = await apiPost('/api/sftp/mkdir', {
+        node_id: parseInt(params.nodeId as string),
+        path: dirPath,
+      })
+
+      if (!res.ok) throw new Error('Failed to create directory')
+
+      setShowMkdirForm(false)
+      setNewDirName('')
+      fetchFiles(currentPath)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create directory')
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-6xl mx-auto">
@@ -119,7 +177,45 @@ export default function SFTPPage() {
             <h1 className="text-3xl font-bold">SFTP Browser</h1>
             <p className="text-gray-600 mt-1">Current path: {currentPath}</p>
           </div>
+          <div className="flex gap-2">
+            <label className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 cursor-pointer">
+              {uploading ? 'Uploading...' : 'Upload File'}
+              <input
+                type="file"
+                onChange={handleUpload}
+                disabled={uploading}
+                className="hidden"
+              />
+            </label>
+            <button
+              onClick={() => setShowMkdirForm(!showMkdirForm)}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              {showMkdirForm ? 'Cancel' : 'New Folder'}
+            </button>
+          </div>
         </div>
+
+        {showMkdirForm && (
+          <div className="mb-4 bg-white p-4 rounded-lg shadow">
+            <form onSubmit={handleMkdir} className="flex gap-2">
+              <input
+                type="text"
+                value={newDirName}
+                onChange={(e) => setNewDirName(e.target.value)}
+                placeholder="Directory name"
+                required
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-md"
+              />
+              <button
+                type="submit"
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                Create
+              </button>
+            </form>
+          </div>
+        )}
 
         {error && (
           <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">

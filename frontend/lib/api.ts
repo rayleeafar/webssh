@@ -32,8 +32,11 @@ export async function apiRequest(
   options: RequestInit = {}
 ): Promise<Response> {
   const token = getAuthToken()
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+  const headers: Record<string, string> = {}
+
+  // Don't set Content-Type for FormData — browser sets it with boundary
+  if (!(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json'
   }
 
   // Merge existing headers

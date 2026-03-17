@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { apiGet, apiPost, apiDelete } from '@/lib/api'
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api'
 
 interface Node {
   id: number
@@ -17,6 +17,7 @@ export default function NodesPage() {
   const [nodes, setNodes] = useState<Node[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
+  const [editingNode, setEditingNode] = useState<Node | null>(null)
   const [formData, setFormData] = useState({
     name: '',
     host: '',
@@ -62,19 +63,49 @@ export default function NodesPage() {
     setError('')
 
     try {
-      const res = await apiPost('/api/nodes', formData)
+      if (editingNode) {
+        // Update existing node
+        const res = await apiPut(`/api/nodes/${editingNode.id}`, formData)
 
-      if (!res.ok) {
-        const text = await res.text()
-        throw new Error(text || 'Failed to create node')
+        if (!res.ok) {
+          const text = await res.text()
+          throw new Error(text || 'Failed to update node')
+        }
+      } else {
+        // Create new node
+        const res = await apiPost('/api/nodes', formData)
+
+        if (!res.ok) {
+          const text = await res.text()
+          throw new Error(text || 'Failed to create node')
+        }
       }
 
       setShowForm(false)
+      setEditingNode(null)
       setFormData({ name: '', host: '', port: 22, username: '', password: '' })
       fetchNodes()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create node')
+      setError(err instanceof Error ? err.message : 'Failed to save node')
     }
+  }
+
+  const handleEdit = (node: Node) => {
+    setEditingNode(node)
+    setFormData({
+      name: node.name,
+      host: node.host,
+      port: node.port,
+      username: node.username,
+      password: '', // Don't populate password for security
+    })
+    setShowForm(true)
+  }
+
+  const handleCancelEdit = () => {
+    setShowForm(false)
+    setEditingNode(null)
+    setFormData({ name: '', host: '', port: 22, username: '', password: '' })
   }
 
   const handleDelete = async (id: number) => {
@@ -101,10 +132,18 @@ export default function NodesPage() {
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold">SSH Nodes</h1>
           <button
-            onClick={() => setShowForm(!showForm)}
+            onClick={() => {
+              if (showForm && !editingNode) {
+                handleCancelEdit()
+              } else {
+                setShowForm(!showForm)
+                setEditingNode(null)
+                setFormData({ name: '', host: '', port: 22, username: '', password: '' })
+              }
+            }}
             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
           >
-            {showForm ? 'Cancel' : 'Add Node'}
+            {showForm && !editingNode ? 'Cancel' : 'Add Node'}
           </button>
         </div>
 
@@ -116,7 +155,9 @@ export default function NodesPage() {
 
         {showForm && (
           <div className="mb-8 bg-white p-6 rounded-lg shadow">
-            <h2 className="text-xl font-bold mb-4">Add New Node</h2>
+            <h2 className="text-xl font-bold mb-4">
+              {editingNode ? 'Edit Node' : 'Add New Node'}
+            </h2>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700">Name</label>
@@ -159,21 +200,34 @@ export default function NodesPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Password</label>
+                <label className="block text-sm font-medium text-gray-700">
+                  Password {editingNode && '(leave blank to keep current)'}
+                </label>
                 <input
                   type="password"
-                  required
+                  required={!editingNode}
                   value={formData.password}
                   onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                   className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md"
                 />
               </div>
-              <button
-                type="submit"
-                className="w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-              >
-                Create Node
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                >
+                  {editingNode ? 'Update Node' : 'Create Node'}
+                </button>
+                {editingNode && (
+                  <button
+                    type="button"
+                    onClick={handleCancelEdit}
+                    className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
             </form>
           </div>
         )}
@@ -206,6 +260,12 @@ export default function NodesPage() {
                     >
                       SFTP
                     </a>
+                    <button
+                      onClick={() => handleEdit(node)}
+                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                    >
+                      Edit
+                    </button>
                     <button
                       onClick={() => handleDelete(node.id)}
                       className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
