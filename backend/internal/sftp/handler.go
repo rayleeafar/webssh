@@ -11,6 +11,7 @@ import (
 	"strconv"
 
 	"github.com/pkg/sftp"
+	sshutil "github.com/webssh/manager/internal/ssh"
 	"github.com/webssh/manager/internal/middleware"
 	"github.com/webssh/manager/pkg/crypto"
 	"golang.org/x/crypto/ssh"
@@ -267,14 +268,14 @@ func (h *SFTPHandler) Mkdir(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SFTPHandler) getSFTPClient(nodeID, userID int, encryptionKey string) (*sftp.Client, func(), error) {
-	var host, nodeUsername, encryptedCreds string
+	var host, nodeUsername, encryptedCreds, authType string
 	var port, ownerID int
 
 	err := h.db.QueryRow(`
-		SELECT host, port, username, encrypted_credentials, user_id
+		SELECT host, port, username, auth_type, encrypted_credentials, user_id
 		FROM nodes
 		WHERE id = ?
-	`, nodeID).Scan(&host, &port, &nodeUsername, &encryptedCreds, &ownerID)
+	`, nodeID).Scan(&host, &port, &nodeUsername, &authType, &encryptedCreds, &ownerID)
 	if err == sql.ErrNoRows {
 		return nil, nil, fmt.Errorf("node not found")
 	}
@@ -297,11 +298,14 @@ func (h *SFTPHandler) getSFTPClient(nodeID, userID int, encryptionKey string) (*
 		return nil, nil, fmt.Errorf("failed to decrypt credentials")
 	}
 
+	authMethods, err := sshutil.BuildAuthMethod(authType, credentials)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to build auth method: %w", err)
+	}
+
 	sshConfig := &ssh.ClientConfig{
-		User: nodeUsername,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(credentials),
-		},
+		User:            nodeUsername,
+		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 

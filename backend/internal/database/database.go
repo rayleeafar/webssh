@@ -48,6 +48,7 @@ func migrate(db *sql.DB) error {
 		host TEXT NOT NULL,
 		port INTEGER NOT NULL DEFAULT 22,
 		username TEXT NOT NULL,
+		auth_type TEXT NOT NULL DEFAULT 'password',
 		encrypted_credentials TEXT NOT NULL,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -70,5 +71,12 @@ func migrate(db *sql.DB) error {
 	`
 
 	_, err := db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Add auth_type column if it doesn't exist (migration for existing databases)
+	db.Exec("ALTER TABLE nodes ADD COLUMN auth_type TEXT NOT NULL DEFAULT 'password'")
+
+	return nil
 }

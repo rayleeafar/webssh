@@ -56,13 +56,13 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var host, username, encryptedCreds string
+	var host, username, encryptedCreds, authType string
 	var port, ownerID int
 	err = h.db.QueryRow(`
-		SELECT n.host, n.port, n.username, n.encrypted_credentials, n.user_id
+		SELECT n.host, n.port, n.username, n.auth_type, n.encrypted_credentials, n.user_id
 		FROM nodes n
 		WHERE n.id = ?
-	`, nodeID).Scan(&host, &port, &username, &encryptedCreds, &ownerID)
+	`, nodeID).Scan(&host, &port, &username, &authType, &encryptedCreds, &ownerID)
 	if err == sql.ErrNoRows {
 		http.Error(w, "Node not found", http.StatusNotFound)
 		return
@@ -92,6 +92,13 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	authMethods, err := BuildAuthMethod(authType, credentials)
+	if err != nil {
+		log.Printf("Failed to build auth method for node %d: %v", nodeID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade failed: %v", err)
@@ -100,10 +107,8 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 	defer conn.Close()
 
 	sshConfig := &ssh.ClientConfig{
-		User: username,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(credentials),
-		},
+		User:            username,
+		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 

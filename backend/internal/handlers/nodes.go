@@ -75,8 +75,10 @@ func (h *NodeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	credentials := req.Password
+	authType := "password"
 	if req.PrivateKey != "" {
 		credentials = req.PrivateKey
+		authType = "private_key"
 	}
 
 	// Decode the encryption key from the session
@@ -93,9 +95,9 @@ func (h *NodeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.db.Exec(`
-		INSERT INTO nodes (user_id, name, host, port, username, encrypted_credentials)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, user.ID, req.Name, req.Host, req.Port, req.Username, encryptedCreds)
+		INSERT INTO nodes (user_id, name, host, port, username, auth_type, encrypted_credentials)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, user.ID, req.Name, req.Host, req.Port, req.Username, authType, encryptedCreds)
 	if err != nil {
 		http.Error(w, "Failed to create node", http.StatusInternalServerError)
 		return
@@ -207,8 +209,10 @@ func (h *NodeHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	if req.Password != "" || req.PrivateKey != "" {
 		credentials := req.Password
+		authType := "password"
 		if req.PrivateKey != "" {
 			credentials = req.PrivateKey
+			authType = "private_key"
 		}
 
 		// Decode the encryption key from the session
@@ -224,8 +228,8 @@ func (h *NodeHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		query += ", encrypted_credentials = ?"
-		args = append(args, encryptedCreds)
+		query += ", auth_type = ?, encrypted_credentials = ?"
+		args = append(args, authType, encryptedCreds)
 	}
 
 	query += " WHERE id = ?"

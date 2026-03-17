@@ -24,6 +24,7 @@ export default function NodesPage() {
     port: 22,
     username: '',
     password: '',
+    private_key: '',
   })
   const [error, setError] = useState('')
   const router = useRouter()
@@ -83,7 +84,7 @@ export default function NodesPage() {
 
       setShowForm(false)
       setEditingNode(null)
-      setFormData({ name: '', host: '', port: 22, username: '', password: '' })
+      setFormData({ name: '', host: '', port: 22, username: '', password: '', private_key: '' })
       fetchNodes()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save node')
@@ -97,7 +98,8 @@ export default function NodesPage() {
       host: node.host,
       port: node.port,
       username: node.username,
-      password: '', // Don't populate password for security
+      password: '',
+      private_key: '',
     })
     setShowForm(true)
   }
@@ -105,7 +107,7 @@ export default function NodesPage() {
   const handleCancelEdit = () => {
     setShowForm(false)
     setEditingNode(null)
-    setFormData({ name: '', host: '', port: 22, username: '', password: '' })
+    setFormData({ name: '', host: '', port: 22, username: '', password: '', private_key: '' })
   }
 
   const handleDelete = async (id: number) => {
@@ -138,7 +140,7 @@ export default function NodesPage() {
               } else {
                 setShowForm(!showForm)
                 setEditingNode(null)
-                setFormData({ name: '', host: '', port: 22, username: '', password: '' })
+                setFormData({ name: '', host: '', port: 22, username: '', password: '', private_key: '' })
               }
             }}
             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
@@ -205,10 +207,22 @@ export default function NodesPage() {
                 </label>
                 <input
                   type="password"
-                  required={!editingNode}
+                  required={!editingNode && !formData.private_key}
                   value={formData.password}
                   onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                   className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Private Key (optional, use instead of password)
+                </label>
+                <textarea
+                  value={formData.private_key}
+                  onChange={(e) => setFormData({ ...formData, private_key: e.target.value })}
+                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                  rows={4}
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md font-mono text-sm"
                 />
               </div>
               <div className="flex gap-2">
