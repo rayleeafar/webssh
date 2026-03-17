@@ -8,6 +8,7 @@ type User struct {
 	PasswordHash      string    `json:"-"`
 	EncryptionKeySalt string    `json:"-"`
 	EncryptionKey     string    `json:"-"`
+	CSRFToken         string    `json:"-"`
 	CreatedAt         time.Time `json:"created_at"`
 }
 
@@ -25,6 +26,7 @@ type Node struct {
 
 type Session struct {
 	Token     string    `json:"token"`
+	CSRFToken string    `json:"csrf_token"`
 	UserID    int       `json:"user_id"`
 	ExpiresAt time.Time `json:"expires_at"`
 	CreatedAt time.Time `json:"created_at"`

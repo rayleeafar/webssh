@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { apiPost } from '@/lib/api'
+import { apiPost, setCsrfToken } from '@/lib/api'
 
 export default function LoginPage() {
   const [username, setUsername] = useState('')
@@ -24,7 +24,10 @@ export default function LoginPage() {
       }
 
       const data = await res.json()
-      localStorage.setItem('session_token', data.token)
+      // Cache the session-bound CSRF token in memory for subsequent requests
+      if (data.csrf_token) {
+        setCsrfToken(data.csrf_token)
+      }
       router.push('/nodes')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed')
@@ -83,7 +86,7 @@ export default function LoginPage() {
           </button>
           <div className="text-center">
             <a href="/register" className="text-sm text-blue-600 hover:text-blue-500">
-              Don't have an account? Register
+              Don&apos;t have an account? Register
             </a>
           </div>
         </form>

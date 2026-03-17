@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { Terminal } from 'xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import 'xterm/css/xterm.css'
+import { apiGet, getWebSocketBase, setCsrfToken } from '@/lib/api'
 
 export default function TerminalPage() {
   const params = useParams()
@@ -14,85 +15,98 @@ export default function TerminalPage() {
   const [connected, setConnected] = useState(false)
 
   useEffect(() => {
-    const token = localStorage.getItem('session_token')
-    if (!token) {
-      router.push('/login')
-      return
-    }
+    let ws: WebSocket | null = null
+    let term: Terminal | null = null
 
-    const nodeId = params.nodeId as string
-    const term = new Terminal({
-      cursorBlink: true,
-      fontSize: 14,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-      theme: {
-        background: '#1e1e1e',
-        foreground: '#d4d4d4',
-      },
-    })
+    const init = async () => {
+      // Bootstrap auth from session cookie
+      const meRes = await apiGet('/api/auth/me')
+      if (meRes.status === 401) {
+        router.push('/login')
+        return
+      }
+      if (meRes.ok) {
+        const me = await meRes.json()
+        if (me.csrf_token) setCsrfToken(me.csrf_token)
+      }
 
-    const fitAddon = new FitAddon()
-    term.loadAddon(fitAddon)
-
-    if (terminalRef.current) {
-      term.open(terminalRef.current)
-      fitAddon.fit()
-    }
-
-    const ws = new WebSocket(
-      `${process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080'}/ws/terminal?nodeId=${nodeId}`
-    )
-
-    ws.onopen = () => {
-      setConnected(true)
-      setError('')
-
-      const resizeObserver = new ResizeObserver(() => {
-        fitAddon.fit()
-        const dims = fitAddon.proposeDimensions()
-        if (dims) {
-          const msg = new Uint8Array(5)
-          msg[0] = 0
-          msg[1] = (dims.rows >> 8) & 0xff
-          msg[2] = dims.rows & 0xff
-          msg[3] = (dims.cols >> 8) & 0xff
-          msg[4] = dims.cols & 0xff
-          ws.send(msg)
-        }
+      const nodeId = params.nodeId as string
+      term = new Terminal({
+        cursorBlink: true,
+        fontSize: 14,
+        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        theme: {
+          background: '#1e1e1e',
+          foreground: '#d4d4d4',
+        },
       })
+
+      const fitAddon = new FitAddon()
+      term.loadAddon(fitAddon)
 
       if (terminalRef.current) {
-        resizeObserver.observe(terminalRef.current)
+        term.open(terminalRef.current)
+        fitAddon.fit()
       }
 
-      term.onData((data) => {
-        ws.send(data)
-      })
-    }
+      const wsBase = getWebSocketBase()
+      ws = new WebSocket(`${wsBase}/ws/terminal?nodeId=${nodeId}`)
 
-    ws.onmessage = (event) => {
-      if (event.data instanceof Blob) {
-        event.data.arrayBuffer().then((buffer) => {
-          term.write(new Uint8Array(buffer))
+      ws.onopen = () => {
+        setConnected(true)
+        setError('')
+
+        const resizeObserver = new ResizeObserver(() => {
+          fitAddon.fit()
+          const dims = fitAddon.proposeDimensions()
+          if (dims && ws && ws.readyState === WebSocket.OPEN) {
+            const msg = new Uint8Array(5)
+            msg[0] = 0
+            msg[1] = (dims.rows >> 8) & 0xff
+            msg[2] = dims.rows & 0xff
+            msg[3] = (dims.cols >> 8) & 0xff
+            msg[4] = dims.cols & 0xff
+            ws.send(msg)
+          }
         })
-      } else if (typeof event.data === 'string') {
-        term.write(event.data)
+
+        if (terminalRef.current) {
+          resizeObserver.observe(terminalRef.current)
+        }
+
+        term!.onData((data) => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(data)
+          }
+        })
+      }
+
+      ws.onmessage = (event) => {
+        if (event.data instanceof Blob) {
+          event.data.arrayBuffer().then((buffer) => {
+            term?.write(new Uint8Array(buffer))
+          })
+        } else if (typeof event.data === 'string') {
+          term?.write(event.data)
+        }
+      }
+
+      ws.onerror = () => {
+        setError('WebSocket connection error')
+        setConnected(false)
+      }
+
+      ws.onclose = () => {
+        setConnected(false)
+        term?.write('\r\n\r\nConnection closed.\r\n')
       }
     }
 
-    ws.onerror = () => {
-      setError('WebSocket connection error')
-      setConnected(false)
-    }
-
-    ws.onclose = () => {
-      setConnected(false)
-      term.write('\r\n\r\nConnection closed.\r\n')
-    }
+    init().catch(() => router.push('/login'))
 
     return () => {
-      ws.close()
-      term.dispose()
+      ws?.close()
+      term?.dispose()
     }
   }, [params.nodeId, router])
 

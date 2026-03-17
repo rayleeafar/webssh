@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { apiGet, apiPost, apiDelete, apiRequest } from '@/lib/api'
+import { apiGet, apiPost, apiDelete, apiRequest, setCsrfToken } from '@/lib/api'
 
 interface FileInfo {
   name: string
@@ -24,20 +24,35 @@ export default function SFTPPage() {
   const [uploading, setUploading] = useState(false)
 
   useEffect(() => {
-    fetchFiles(currentPath)
+    checkAuth()
+  }, [])
+
+  useEffect(() => {
+    if (!loading) fetchFiles(currentPath)
   }, [currentPath])
+
+  const checkAuth = async () => {
+    try {
+      const res = await apiGet('/api/auth/me')
+      if (res.status === 401) {
+        router.push('/login')
+        return
+      }
+      if (res.ok) {
+        const me = await res.json()
+        if (me.csrf_token) setCsrfToken(me.csrf_token)
+      }
+      await fetchFiles(currentPath)
+    } catch {
+      router.push('/login')
+    }
+  }
 
   const fetchFiles = async (path: string) => {
     setLoading(true)
     setError('')
 
     try {
-      const token = localStorage.getItem('session_token')
-      if (!token) {
-        router.push('/login')
-        return
-      }
-
       const res = await apiGet(
         `/api/sftp/list?nodeId=${params.nodeId}&path=${encodeURIComponent(path)}`
       )
@@ -127,7 +142,7 @@ export default function SFTPPage() {
       const res = await apiRequest('/api/sftp/upload', {
         method: 'POST',
         body: formData,
-        headers: {}, // Let browser set Content-Type with boundary
+        headers: {},
       })
 
       if (!res.ok) throw new Error('Upload failed')
@@ -137,7 +152,6 @@ export default function SFTPPage() {
       setError(err instanceof Error ? err.message : 'Upload failed')
     } finally {
       setUploading(false)
-      // Reset file input
       e.target.value = ''
     }
   }

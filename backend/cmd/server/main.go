@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
@@ -32,8 +31,7 @@ func main() {
 	sftpHandler := sftp.NewSFTPHandler(db)
 
 	authMiddleware := middleware.AuthMiddleware(authService)
-	csrfStore := middleware.NewCSRFStore()
-	csrfMiddleware := middleware.CSRFMiddleware(csrfStore)
+	csrfMiddleware := middleware.CSRFMiddleware
 
 	mux := http.NewServeMux()
 
@@ -42,19 +40,9 @@ func main() {
 		w.Write([]byte("OK"))
 	})
 
-	mux.HandleFunc("/api/csrf-token", func(w http.ResponseWriter, r *http.Request) {
-		token, err := csrfStore.Generate()
-		if err != nil {
-			http.Error(w, "Failed to generate token", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"token": token})
-	})
-
 	mux.HandleFunc("/api/auth/register", authHandler.Register)
 	mux.HandleFunc("/api/auth/login", authHandler.Login)
-	mux.Handle("/api/auth/logout", csrfMiddleware(http.HandlerFunc(authHandler.Logout)))
+	mux.Handle("/api/auth/logout", authMiddleware(csrfMiddleware(http.HandlerFunc(authHandler.Logout))))
 	mux.Handle("/api/auth/me", authMiddleware(http.HandlerFunc(authHandler.Me)))
 
 	mux.Handle("/api/nodes", authMiddleware(csrfMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -101,14 +89,20 @@ func main() {
 		go func() {
 			httpAddr := cfg.HTTPAddr
 			log.Printf("Starting HTTP redirect server on %s", httpAddr)
+
+			// Extract just the port from addr (e.g. "0.0.0.0:8443" → ":8443")
+			httpsPort := addr
+			if colonIdx := strings.LastIndex(addr, ":"); colonIdx != -1 {
+				httpsPort = addr[colonIdx:]
+			}
+
 			http.ListenAndServe(httpAddr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				// Parse the host to strip the port
 				host := r.Host
+				// Strip port from incoming Host header
 				if colonIdx := strings.LastIndex(host, ":"); colonIdx != -1 {
 					host = host[:colonIdx]
 				}
-				// Redirect to HTTPS with the configured HTTPS port
-				target := "https://" + host + addr + r.RequestURI
+				target := "https://" + host + httpsPort + r.RequestURI
 				http.Redirect(w, r, target, http.StatusMovedPermanently)
 			}))
 		}()

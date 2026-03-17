@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api'
+import { apiGet, apiPost, apiPut, apiDelete, setCsrfToken } from '@/lib/api'
 
 interface Node {
   id: number
@@ -30,17 +30,29 @@ export default function NodesPage() {
   const router = useRouter()
 
   useEffect(() => {
-    fetchNodes()
+    checkAuthAndFetch()
   }, [])
 
-  const fetchNodes = async () => {
+  const checkAuthAndFetch = async () => {
     try {
-      const token = localStorage.getItem('session_token')
-      if (!token) {
+      // Bootstrap auth state from the session cookie
+      const meRes = await apiGet('/api/auth/me')
+      if (meRes.status === 401) {
         router.push('/login')
         return
       }
+      if (meRes.ok) {
+        const me = await meRes.json()
+        if (me.csrf_token) setCsrfToken(me.csrf_token)
+      }
+      await fetchNodes()
+    } catch {
+      router.push('/login')
+    }
+  }
 
+  const fetchNodes = async () => {
+    try {
       const res = await apiGet('/api/nodes')
 
       if (res.status === 401) {
@@ -65,17 +77,13 @@ export default function NodesPage() {
 
     try {
       if (editingNode) {
-        // Update existing node
         const res = await apiPut(`/api/nodes/${editingNode.id}`, formData)
-
         if (!res.ok) {
           const text = await res.text()
           throw new Error(text || 'Failed to update node')
         }
       } else {
-        // Create new node
         const res = await apiPost('/api/nodes', formData)
-
         if (!res.ok) {
           const text = await res.text()
           throw new Error(text || 'Failed to create node')
@@ -115,9 +123,7 @@ export default function NodesPage() {
 
     try {
       const res = await apiDelete(`/api/nodes/${id}`)
-
       if (!res.ok) throw new Error('Failed to delete node')
-
       fetchNodes()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete node')

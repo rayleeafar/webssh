@@ -1,37 +1,41 @@
-// API utility with CSRF token handling
+// API utility — authentication via HTTP-only session cookie, CSRF token in memory
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || ''
 
 let csrfToken: string | null = null
 
-export async function fetchCSRFToken(): Promise<string> {
-  if (csrfToken) {
-    return csrfToken
-  }
+export function setCsrfToken(token: string): void {
+  csrfToken = token
+}
 
-  const res = await fetch(`${API_BASE}/api/csrf-token`, {
+export function invalidateCSRFToken(): void {
+  csrfToken = null
+}
+
+/**
+ * Fetch the CSRF token bound to the current session.
+ * Uses /api/auth/me so the token is always session-specific.
+ */
+export async function fetchCSRFToken(): Promise<string> {
+  if (csrfToken) return csrfToken
+
+  const res = await fetch(`${API_BASE}/api/auth/me`, {
     credentials: 'include',
   })
 
   if (!res.ok) {
-    throw new Error('Failed to fetch CSRF token')
+    throw new Error('Not authenticated')
   }
 
   const data = await res.json()
-  csrfToken = data.token
-  return data.token
-}
-
-export function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null
-  return localStorage.getItem('session_token')
+  csrfToken = data.csrf_token
+  return data.csrf_token
 }
 
 export async function apiRequest(
   url: string,
   options: RequestInit = {}
 ): Promise<Response> {
-  const token = getAuthToken()
   const headers: Record<string, string> = {}
 
   // Don't set Content-Type for FormData — browser sets it with boundary
@@ -39,16 +43,11 @@ export async function apiRequest(
     headers['Content-Type'] = 'application/json'
   }
 
-  // Merge existing headers
   if (options.headers) {
     const existingHeaders = new Headers(options.headers)
     existingHeaders.forEach((value, key) => {
       headers[key] = value
     })
-  }
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
   }
 
   // Add CSRF token for state-changing methods
@@ -68,14 +67,14 @@ export async function apiGet(url: string): Promise<Response> {
   return apiRequest(url, { method: 'GET' })
 }
 
-export async function apiPost(url: string, body?: any): Promise<Response> {
+export async function apiPost(url: string, body?: unknown): Promise<Response> {
   return apiRequest(url, {
     method: 'POST',
     body: body ? JSON.stringify(body) : undefined,
   })
 }
 
-export async function apiPut(url: string, body?: any): Promise<Response> {
+export async function apiPut(url: string, body?: unknown): Promise<Response> {
   return apiRequest(url, {
     method: 'PUT',
     body: body ? JSON.stringify(body) : undefined,
@@ -84,4 +83,18 @@ export async function apiPut(url: string, body?: any): Promise<Response> {
 
 export async function apiDelete(url: string): Promise<Response> {
   return apiRequest(url, { method: 'DELETE' })
+}
+
+/**
+ * Derive the WebSocket base URL from the current page origin,
+ * upgrading to wss:// when the page is served over HTTPS.
+ */
+export function getWebSocketBase(): string {
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || ''
+  if (apiBase) {
+    return apiBase.replace(/^https/, 'wss').replace(/^http/, 'ws')
+  }
+  if (typeof window === 'undefined') return 'ws://localhost:8080'
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${window.location.host}`
 }

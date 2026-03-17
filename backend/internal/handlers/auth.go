@@ -9,7 +9,7 @@ import (
 )
 
 type AuthHandler struct {
-	authService *auth.Service
+	authService  *auth.Service
 	secureCookie bool
 }
 
@@ -27,14 +27,10 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
-type AuthResponse struct {
-	Token  string `json:"token"`
-	UserID int    `json:"user_id"`
-}
-
 type UserResponse struct {
-	ID       int    `json:"id"`
-	Username string `json:"username"`
+	ID        int    `json:"id"`
+	Username  string `json:"username"`
+	CSRFToken string `json:"csrf_token"`
 }
 
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +53,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	user, err := h.authService.Register(req.Username, req.Password)
 	if err != nil {
 		if err.Error() == "UNIQUE constraint failed: users.username" ||
-		   err.Error() == "failed to create user: UNIQUE constraint failed: users.username" {
+			err.Error() == "failed to create user: UNIQUE constraint failed: users.username" {
 			http.Error(w, "Username already exists", http.StatusConflict)
 			return
 		}
@@ -67,9 +63,9 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(UserResponse{
-		ID:       user.ID,
-		Username: user.Username,
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":       user.ID,
+		"username": user.Username,
 	})
 }
 
@@ -102,9 +98,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(AuthResponse{
-		Token:  session.Token,
-		UserID: session.UserID,
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"user_id":    session.UserID,
+		"csrf_token": session.CSRFToken,
 	})
 }
 
@@ -125,15 +121,11 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Revoke the session in the database
 	if token != "" {
-		if err := h.authService.RevokeSession(token); err != nil {
-			// Log error but don't fail the logout
-			// The cookie will still be cleared
-		}
+		// Ignore error — cookie will still be cleared
+		h.authService.RevokeSession(token)
 	}
 
-	// Clear the cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session_token",
 		Value:    "",
@@ -159,7 +151,8 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(UserResponse{
-		ID:       user.ID,
-		Username: user.Username,
+		ID:        user.ID,
+		Username:  user.Username,
+		CSRFToken: user.CSRFToken,
 	})
 }
