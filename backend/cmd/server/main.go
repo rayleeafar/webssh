@@ -25,7 +25,7 @@ func main() {
 	defer db.Close()
 
 	authService := auth.NewService(db)
-	authHandler := handlers.NewAuthHandler(authService)
+	authHandler := handlers.NewAuthHandler(authService, cfg.EnableTLS)
 	nodeHandler := handlers.NewNodeHandler(db)
 	terminalHandler := ssh.NewTerminalHandler(db, authService)
 	sftpHandler := sftp.NewSFTPHandler(db)
@@ -98,7 +98,7 @@ func main() {
 		})
 
 		go func() {
-			httpAddr := ":8080"
+			httpAddr := cfg.HTTPAddr
 			log.Printf("Starting HTTP redirect server on %s", httpAddr)
 			http.ListenAndServe(httpAddr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				target := "https://" + r.Host + r.RequestURI

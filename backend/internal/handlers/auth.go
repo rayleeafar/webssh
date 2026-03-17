@@ -10,10 +10,11 @@ import (
 
 type AuthHandler struct {
 	authService *auth.Service
+	secureCookie bool
 }
 
-func NewAuthHandler(authService *auth.Service) *AuthHandler {
-	return &AuthHandler{authService: authService}
+func NewAuthHandler(authService *auth.Service, secureCookie bool) *AuthHandler {
+	return &AuthHandler{authService: authService, secureCookie: secureCookie}
 }
 
 type RegisterRequest struct {
@@ -95,7 +96,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Value:    session.Token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   false,
+		Secure:   h.secureCookie,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   86400,
 	})

@@ -10,15 +10,22 @@ type Config struct {
 	TLSCertPath  string
 	TLSKeyPath   string
 	EnableTLS    bool
+	HTTPAddr     string
 }
 
 func Load() *Config {
+	enableTLS := getEnv("ENABLE_TLS", "false") == "true"
+	defaultAddr := ":8080"
+	if enableTLS {
+		defaultAddr = ":8443"
+	}
 	return &Config{
 		DatabasePath: getEnv("DB_PATH", "./data/webssh.db"),
-		ListenAddr:   getEnv("LISTEN_ADDR", ":8080"),
+		ListenAddr:   getEnv("LISTEN_ADDR", defaultAddr),
 		TLSCertPath:  getEnv("TLS_CERT", ""),
 		TLSKeyPath:   getEnv("TLS_KEY", ""),
-		EnableTLS:    getEnv("ENABLE_TLS", "false") == "true",
+		EnableTLS:    enableTLS,
+		HTTPAddr:     getEnv("HTTP_ADDR", ":8080"),
 	}
 }
 
