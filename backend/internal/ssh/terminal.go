@@ -75,13 +75,15 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 	// Decode the encryption key from the session
 	key, err := base64.StdEncoding.DecodeString(user.EncryptionKey)
 	if err != nil {
-		http.Error(w, "Failed to decode encryption key", http.StatusInternalServerError)
+		log.Printf("Failed to decode encryption key: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	credentials, err := crypto.Decrypt(encryptedCreds, key)
 	if err != nil {
-		http.Error(w, "Failed to decrypt credentials", http.StatusInternalServerError)
+		log.Printf("Failed to decrypt credentials for node %d: %v", nodeID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -102,33 +104,34 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 
 	sshClient, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", host, port), sshConfig)
 	if err != nil {
-		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("SSH connection failed: %v\r\n", err)))
+		log.Printf("SSH connection failed for node %d: %v", nodeID, err)
+		conn.WriteMessage(websocket.TextMessage, []byte("SSH connection failed. Check node credentials and connectivity.\r\n"))
 		return
 	}
 	defer sshClient.Close()
 
 	session, err := sshClient.NewSession()
 	if err != nil {
-		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("Failed to create session: %v\r\n", err)))
+		conn.WriteMessage(websocket.TextMessage, []byte("Failed to create SSH session.\r\n"))
 		return
 	}
 	defer session.Close()
 
 	stdin, err := session.StdinPipe()
 	if err != nil {
-		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("Failed to get stdin: %v\r\n", err)))
+		conn.WriteMessage(websocket.TextMessage, []byte("Failed to initialize terminal.\r\n"))
 		return
 	}
 
 	stdout, err := session.StdoutPipe()
 	if err != nil {
-		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("Failed to get stdout: %v\r\n", err)))
+		conn.WriteMessage(websocket.TextMessage, []byte("Failed to initialize terminal.\r\n"))
 		return
 	}
 
 	stderr, err := session.StderrPipe()
 	if err != nil {
-		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("Failed to get stderr: %v\r\n", err)))
+		conn.WriteMessage(websocket.TextMessage, []byte("Failed to initialize terminal.\r\n"))
 		return
 	}
 
@@ -139,12 +142,12 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := session.RequestPty("xterm-256color", 24, 80, modes); err != nil {
-		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("Failed to request PTY: %v\r\n", err)))
+		conn.WriteMessage(websocket.TextMessage, []byte("Failed to request terminal.\r\n"))
 		return
 	}
 
 	if err := session.Shell(); err != nil {
-		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("Failed to start shell: %v\r\n", err)))
+		conn.WriteMessage(websocket.TextMessage, []byte("Failed to start shell.\r\n"))
 		return
 	}
 

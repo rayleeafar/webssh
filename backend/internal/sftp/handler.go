@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -57,14 +58,16 @@ func (h *SFTPHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	sftpClient, cleanup, err := h.getSFTPClient(nodeID, user.ID, user.EncryptionKey)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("SFTP connection failed for node %d: %v", nodeID, err)
+		http.Error(w, "Failed to connect to server", http.StatusInternalServerError)
 		return
 	}
 	defer cleanup()
 
 	files, err := sftpClient.ReadDir(path)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to list directory: %v", err), http.StatusInternalServerError)
+		log.Printf("Failed to list directory %q on node %d: %v", path, nodeID, err)
+		http.Error(w, "Failed to list directory", http.StatusInternalServerError)
 		return
 	}
 
@@ -106,14 +109,16 @@ func (h *SFTPHandler) Download(w http.ResponseWriter, r *http.Request) {
 
 	sftpClient, cleanup, err := h.getSFTPClient(nodeID, user.ID, user.EncryptionKey)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("SFTP connection failed for node %d: %v", nodeID, err)
+		http.Error(w, "Failed to connect to server", http.StatusInternalServerError)
 		return
 	}
 	defer cleanup()
 
 	file, err := sftpClient.Open(path)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to open file: %v", err), http.StatusInternalServerError)
+		log.Printf("Failed to open file %q on node %d: %v", path, nodeID, err)
+		http.Error(w, "Failed to open file", http.StatusInternalServerError)
 		return
 	}
 	defer file.Close()
@@ -161,7 +166,8 @@ func (h *SFTPHandler) Upload(w http.ResponseWriter, r *http.Request) {
 
 	sftpClient, cleanup, err := h.getSFTPClient(nodeID, user.ID, user.EncryptionKey)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("SFTP connection failed for node %d: %v", nodeID, err)
+		http.Error(w, "Failed to connect to server", http.StatusInternalServerError)
 		return
 	}
 	defer cleanup()
@@ -169,7 +175,8 @@ func (h *SFTPHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	remotePath := path + "/" + header.Filename
 	remoteFile, err := sftpClient.Create(remotePath)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create remote file: %v", err), http.StatusInternalServerError)
+		log.Printf("Failed to create remote file %q on node %d: %v", remotePath, nodeID, err)
+		http.Error(w, "Failed to create remote file", http.StatusInternalServerError)
 		return
 	}
 	defer remoteFile.Close()
@@ -205,13 +212,15 @@ func (h *SFTPHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	sftpClient, cleanup, err := h.getSFTPClient(nodeID, user.ID, user.EncryptionKey)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("SFTP connection failed for node %d: %v", nodeID, err)
+		http.Error(w, "Failed to connect to server", http.StatusInternalServerError)
 		return
 	}
 	defer cleanup()
 
 	if err := sftpClient.Remove(path); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to delete: %v", err), http.StatusInternalServerError)
+		log.Printf("Failed to delete %q on node %d: %v", path, nodeID, err)
+		http.Error(w, "Failed to delete file", http.StatusInternalServerError)
 		return
 	}
 
@@ -242,13 +251,15 @@ func (h *SFTPHandler) Mkdir(w http.ResponseWriter, r *http.Request) {
 
 	sftpClient, cleanup, err := h.getSFTPClient(req.NodeID, user.ID, user.EncryptionKey)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("SFTP connection failed for node %d: %v", req.NodeID, err)
+		http.Error(w, "Failed to connect to server", http.StatusInternalServerError)
 		return
 	}
 	defer cleanup()
 
 	if err := sftpClient.Mkdir(req.Path); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create directory: %v", err), http.StatusInternalServerError)
+		log.Printf("Failed to create directory %q on node %d: %v", req.Path, req.NodeID, err)
+		http.Error(w, "Failed to create directory", http.StatusInternalServerError)
 		return
 	}
 
