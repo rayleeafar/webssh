@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
+import { apiGet, apiDelete, apiRequest } from '@/lib/api'
 
 interface FileInfo {
   name: string
@@ -34,12 +35,8 @@ export default function SFTPPage() {
         return
       }
 
-      const res = await fetch(
-        `http://localhost:8080/api/sftp/list?nodeId=${params.nodeId}&path=${encodeURIComponent(path)}`,
-        {
-          headers: { 'Authorization': `Bearer ${token}` },
-          credentials: 'include',
-        }
+      const res = await apiGet(
+        `/api/sftp/list?nodeId=${params.nodeId}&path=${encodeURIComponent(path)}`
       )
 
       if (res.status === 401) {
@@ -73,15 +70,10 @@ export default function SFTPPage() {
 
   const handleDownload = async (name: string) => {
     try {
-      const token = localStorage.getItem('session_token')
       const filePath = currentPath === '.' ? name : `${currentPath}/${name}`
 
-      const res = await fetch(
-        `http://localhost:8080/api/sftp/download?nodeId=${params.nodeId}&path=${encodeURIComponent(filePath)}`,
-        {
-          headers: { 'Authorization': `Bearer ${token}` },
-          credentials: 'include',
-        }
+      const res = await apiGet(
+        `/api/sftp/download?nodeId=${params.nodeId}&path=${encodeURIComponent(filePath)}`
       )
 
       if (!res.ok) throw new Error('Download failed')
@@ -102,16 +94,10 @@ export default function SFTPPage() {
     if (!confirm(`Delete ${name}?`)) return
 
     try {
-      const token = localStorage.getItem('session_token')
       const filePath = currentPath === '.' ? name : `${currentPath}/${name}`
 
-      const res = await fetch(
-        `http://localhost:8080/api/sftp/delete?nodeId=${params.nodeId}&path=${encodeURIComponent(filePath)}`,
-        {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${token}` },
-          credentials: 'include',
-        }
+      const res = await apiDelete(
+        `/api/sftp/delete?nodeId=${params.nodeId}&path=${encodeURIComponent(filePath)}`
       )
 
       if (!res.ok) throw new Error('Delete failed')

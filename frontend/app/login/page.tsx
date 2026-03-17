@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { apiPost } from '@/lib/api'
 
 export default function LoginPage() {
   const [username, setUsername] = useState('')
@@ -16,12 +17,7 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const res = await fetch('http://localhost:8080/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ username, password }),
-      })
+      const res = await apiPost('/api/auth/login', { username, password })
 
       if (!res.ok) {
         throw new Error('Invalid credentials')

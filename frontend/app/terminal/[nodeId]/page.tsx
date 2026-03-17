@@ -39,7 +39,9 @@ export default function TerminalPage() {
       fitAddon.fit()
     }
 
-    const ws = new WebSocket(`ws://localhost:8080/ws/terminal?nodeId=${nodeId}`)
+    const ws = new WebSocket(
+      `${process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080'}/ws/terminal?nodeId=${nodeId}`
+    )
 
     ws.onopen = () => {
       setConnected(true)

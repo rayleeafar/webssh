@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { apiGet, apiPost, apiDelete } from '@/lib/api'
 
 interface Node {
   id: number
@@ -38,12 +39,7 @@ export default function NodesPage() {
         return
       }
 
-      const res = await fetch('http://localhost:8080/api/nodes', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-        credentials: 'include',
-      })
+      const res = await apiGet('/api/nodes')
 
       if (res.status === 401) {
         router.push('/login')
@@ -66,16 +62,7 @@ export default function NodesPage() {
     setError('')
 
     try {
-      const token = localStorage.getItem('session_token')
-      const res = await fetch('http://localhost:8080/api/nodes', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        credentials: 'include',
-        body: JSON.stringify(formData),
-      })
+      const res = await apiPost('/api/nodes', formData)
 
       if (!res.ok) {
         const text = await res.text()
@@ -94,14 +81,7 @@ export default function NodesPage() {
     if (!confirm('Are you sure you want to delete this node?')) return
 
     try {
-      const token = localStorage.getItem('session_token')
-      const res = await fetch(`http://localhost:8080/api/nodes/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-        credentials: 'include',
-      })
+      const res = await apiDelete(`/api/nodes/${id}`)
 
       if (!res.ok) throw new Error('Failed to delete node')
 
