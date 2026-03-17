@@ -59,8 +59,9 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 	var host, username, encryptedCreds, authType string
 	var port, ownerID int
 	err = h.db.QueryRow(`
-		SELECT n.host, n.port, n.username, n.auth_type, n.encrypted_credentials, n.user_id
+		SELECT n.host, n.port, n.username, c.auth_type, c.encrypted_value, n.user_id
 		FROM nodes n
+		JOIN credentials c ON n.credential_id = c.id
 		WHERE n.id = ?
 	`, nodeID).Scan(&host, &port, &username, &authType, &encryptedCreds, &ownerID)
 	if err == sql.ErrNoRows {

@@ -158,7 +158,7 @@ func (h *SFTPHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	file, header, err := r.FormFile("file")
+	file, _, err := r.FormFile("file")
 	if err != nil {
 		http.Error(w, "Failed to read file", http.StatusBadRequest)
 		return
@@ -173,10 +173,10 @@ func (h *SFTPHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cleanup()
 
-	remotePath := path + "/" + header.Filename
-	remoteFile, err := sftpClient.Create(remotePath)
+	// path already includes the filename from the frontend
+	remoteFile, err := sftpClient.Create(path)
 	if err != nil {
-		log.Printf("Failed to create remote file %q on node %d: %v", remotePath, nodeID, err)
+		log.Printf("Failed to create remote file %q on node %d: %v", path, nodeID, err)
 		http.Error(w, "Failed to create remote file", http.StatusInternalServerError)
 		return
 	}
@@ -219,10 +219,28 @@ func (h *SFTPHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cleanup()
 
-	if err := sftpClient.Remove(path); err != nil {
-		log.Printf("Failed to delete %q on node %d: %v", path, nodeID, err)
-		http.Error(w, "Failed to delete file", http.StatusInternalServerError)
+	// Check if path is a directory
+	info, err := sftpClient.Stat(path)
+	if err != nil {
+		log.Printf("Failed to stat %q on node %d: %v", path, nodeID, err)
+		http.Error(w, "Failed to access path", http.StatusInternalServerError)
 		return
+	}
+
+	if info.IsDir() {
+		// For directories, use RemoveDirectory
+		if err := sftpClient.RemoveDirectory(path); err != nil {
+			log.Printf("Failed to delete directory %q on node %d: %v", path, nodeID, err)
+			http.Error(w, "Failed to delete directory", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// For files, use Remove
+		if err := sftpClient.Remove(path); err != nil {
+			log.Printf("Failed to delete file %q on node %d: %v", path, nodeID, err)
+			http.Error(w, "Failed to delete file", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -272,9 +290,10 @@ func (h *SFTPHandler) getSFTPClient(nodeID, userID int, encryptionKey string) (*
 	var port, ownerID int
 
 	err := h.db.QueryRow(`
-		SELECT host, port, username, auth_type, encrypted_credentials, user_id
-		FROM nodes
-		WHERE id = ?
+		SELECT n.host, n.port, n.username, c.auth_type, c.encrypted_value, n.user_id
+		FROM nodes n
+		JOIN credentials c ON n.credential_id = c.id
+		WHERE n.id = ?
 	`, nodeID).Scan(&host, &port, &nodeUsername, &authType, &encryptedCreds, &ownerID)
 	if err == sql.ErrNoRows {
 		return nil, nil, fmt.Errorf("node not found")

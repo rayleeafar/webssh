@@ -94,10 +94,29 @@ func (h *NodeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Insert into credentials table first
+	credResult, err := h.db.Exec(`
+		INSERT INTO credentials (user_id, auth_type, encrypted_value)
+		VALUES (?, ?, ?)`,
+		user.ID, authType, encryptedCreds,
+	)
+	if err != nil {
+		http.Error(w, "Failed to store credentials", http.StatusInternalServerError)
+		return
+	}
+
+	credID, err := credResult.LastInsertId()
+	if err != nil {
+		http.Error(w, "Failed to get credential ID", http.StatusInternalServerError)
+		return
+	}
+
+	// Insert into nodes table with credential_id
 	result, err := h.db.Exec(`
-		INSERT INTO nodes (user_id, name, host, port, username, auth_type, encrypted_credentials)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, user.ID, req.Name, req.Host, req.Port, req.Username, authType, encryptedCreds)
+		INSERT INTO nodes (user_id, name, host, port, username, credential_id)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		user.ID, req.Name, req.Host, req.Port, req.Username, credID,
+	)
 	if err != nil {
 		http.Error(w, "Failed to create node", http.StatusInternalServerError)
 		return
@@ -177,8 +196,8 @@ func (h *NodeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var existingUserID int
-	err := h.db.QueryRow("SELECT user_id FROM nodes WHERE id = ?", nodeID).Scan(&existingUserID)
+	var existingUserID, credentialID int
+	err := h.db.QueryRow("SELECT user_id, credential_id FROM nodes WHERE id = ?", nodeID).Scan(&existingUserID, &credentialID)
 	if err == sql.ErrNoRows {
 		http.Error(w, "Node not found", http.StatusNotFound)
 		return
@@ -204,9 +223,7 @@ func (h *NodeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := "UPDATE nodes SET name = ?, host = ?, port = ?, username = ?, updated_at = CURRENT_TIMESTAMP"
-	args := []interface{}{req.Name, req.Host, req.Port, req.Username}
-
+	// Update credentials if provided
 	if req.Password != "" || req.PrivateKey != "" {
 		credentials := req.Password
 		authType := "password"
@@ -228,14 +245,26 @@ func (h *NodeHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		query += ", auth_type = ?, encrypted_credentials = ?"
-		args = append(args, authType, encryptedCreds)
+		// Update the credentials table
+		_, err = h.db.Exec(`
+			UPDATE credentials
+			SET auth_type = ?, encrypted_value = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?`,
+			authType, encryptedCreds, credentialID,
+		)
+		if err != nil {
+			http.Error(w, "Failed to update credentials", http.StatusInternalServerError)
+			return
+		}
 	}
 
-	query += " WHERE id = ?"
-	args = append(args, nodeID)
-
-	_, err = h.db.Exec(query, args...)
+	// Update the nodes table
+	_, err = h.db.Exec(`
+		UPDATE nodes
+		SET name = ?, host = ?, port = ?, username = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?`,
+		req.Name, req.Host, req.Port, req.Username, nodeID,
+	)
 	if err != nil {
 		http.Error(w, "Failed to update node", http.StatusInternalServerError)
 		return

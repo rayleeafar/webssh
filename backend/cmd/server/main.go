@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/webssh/manager/internal/auth"
 	"github.com/webssh/manager/internal/config"
@@ -101,7 +102,13 @@ func main() {
 			httpAddr := cfg.HTTPAddr
 			log.Printf("Starting HTTP redirect server on %s", httpAddr)
 			http.ListenAndServe(httpAddr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				target := "https://" + r.Host + r.RequestURI
+				// Parse the host to strip the port
+				host := r.Host
+				if colonIdx := strings.LastIndex(host, ":"); colonIdx != -1 {
+					host = host[:colonIdx]
+				}
+				// Redirect to HTTPS with the configured HTTPS port
+				target := "https://" + host + addr + r.RequestURI
 				http.Redirect(w, r, target, http.StatusMovedPermanently)
 			}))
 		}()

@@ -205,6 +205,15 @@ func setupTestDB(t *testing.T) *sql.DB {
 		encryption_key_salt TEXT NOT NULL,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+	CREATE TABLE credentials (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL,
+		auth_type TEXT NOT NULL DEFAULT 'password',
+		encrypted_value TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+	);
 	CREATE TABLE nodes (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		user_id INTEGER NOT NULL,
@@ -212,11 +221,11 @@ func setupTestDB(t *testing.T) *sql.DB {
 		host TEXT NOT NULL,
 		port INTEGER NOT NULL DEFAULT 22,
 		username TEXT NOT NULL,
-		auth_type TEXT NOT NULL DEFAULT 'password',
-		encrypted_credentials TEXT NOT NULL,
+		credential_id INTEGER NOT NULL,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+		FOREIGN KEY (credential_id) REFERENCES credentials(id) ON DELETE RESTRICT
 	);`
 
 	if _, err := db.Exec(schema); err != nil {
@@ -242,9 +251,20 @@ func createTestNode(t *testing.T, db *sql.DB, userID int, name, host string) int
 	key := []byte("0123456789abcdef0123456789abcdef")
 	encrypted, _ := crypto.Encrypt("password", key)
 
+	// Insert credential first
+	credResult, err := db.Exec(
+		"INSERT INTO credentials (user_id, auth_type, encrypted_value) VALUES (?, ?, ?)",
+		userID, "password", encrypted,
+	)
+	if err != nil {
+		t.Fatalf("Failed to create test credential: %v", err)
+	}
+	credID, _ := credResult.LastInsertId()
+
+	// Insert node with credential_id
 	result, err := db.Exec(
-		"INSERT INTO nodes (user_id, name, host, port, username, auth_type, encrypted_credentials) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		userID, name, host, 22, "root", "password", encrypted,
+		"INSERT INTO nodes (user_id, name, host, port, username, credential_id) VALUES (?, ?, ?, ?, ?, ?)",
+		userID, name, host, 22, "root", credID,
 	)
 	if err != nil {
 		t.Fatalf("Failed to create test node: %v", err)
