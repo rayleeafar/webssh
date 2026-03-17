@@ -3,10 +3,12 @@ package main
 import (
 	"log"
 	"net/http"
-	"os"
 
+	"github.com/webssh/manager/internal/auth"
 	"github.com/webssh/manager/internal/config"
 	"github.com/webssh/manager/internal/database"
+	"github.com/webssh/manager/internal/handlers"
+	"github.com/webssh/manager/internal/middleware"
 )
 
 func main() {
@@ -18,11 +20,45 @@ func main() {
 	}
 	defer db.Close()
 
+	authService := auth.NewService(db)
+	authHandler := handlers.NewAuthHandler(authService)
+	nodeHandler := handlers.NewNodeHandler(db)
+
+	authMiddleware := middleware.AuthMiddleware(authService)
+
 	mux := http.NewServeMux()
+
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
+
+	mux.HandleFunc("/api/auth/register", authHandler.Register)
+	mux.HandleFunc("/api/auth/login", authHandler.Login)
+	mux.HandleFunc("/api/auth/logout", authHandler.Logout)
+	mux.Handle("/api/auth/me", authMiddleware(http.HandlerFunc(authHandler.Me)))
+
+	mux.Handle("/api/nodes", authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			nodeHandler.List(w, r)
+		case http.MethodPost:
+			nodeHandler.Create(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})))
+
+	mux.Handle("/api/nodes/", authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			nodeHandler.Update(w, r)
+		case http.MethodDelete:
+			nodeHandler.Delete(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})))
 
 	addr := cfg.ListenAddr
 	log.Printf("Starting server on %s", addr)
