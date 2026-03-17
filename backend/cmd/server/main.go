@@ -9,6 +9,7 @@ import (
 	"github.com/webssh/manager/internal/database"
 	"github.com/webssh/manager/internal/handlers"
 	"github.com/webssh/manager/internal/middleware"
+	"github.com/webssh/manager/internal/ssh"
 )
 
 func main() {
@@ -23,6 +24,7 @@ func main() {
 	authService := auth.NewService(db)
 	authHandler := handlers.NewAuthHandler(authService)
 	nodeHandler := handlers.NewNodeHandler(db)
+	terminalHandler := ssh.NewTerminalHandler(db, authService)
 
 	authMiddleware := middleware.AuthMiddleware(authService)
 
@@ -59,6 +61,8 @@ func main() {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})))
+
+	mux.Handle("/ws/terminal", authMiddleware(http.HandlerFunc(terminalHandler.HandleWebSocket)))
 
 	addr := cfg.ListenAddr
 	log.Printf("Starting server on %s", addr)
