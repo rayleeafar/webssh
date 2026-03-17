@@ -1,5 +1,8 @@
 FROM golang:1.25-alpine AS builder
 
+# gcc and musl-dev are required for CGO; sqlite-dev provides the SQLite headers
+RUN apk add --no-cache gcc musl-dev sqlite-dev
+
 WORKDIR /app
 
 COPY go.mod go.sum ./

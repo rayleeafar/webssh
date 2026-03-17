@@ -5,11 +5,11 @@ services:
     restart: unless-stopped
     environment:
       LISTEN_ADDR: "0.0.0.0:8080"
-      DATABASE_PATH: /data/webssh.db
+      DB_PATH: /data/webssh.db
       MASTER_SECRET: ${MASTER_SECRET:?MASTER_SECRET must be set}
       ENABLE_TLS: ${ENABLE_TLS:-false}
-      TLS_CERT_PATH: ${TLS_CERT_PATH:-}
-      TLS_KEY_PATH: ${TLS_KEY_PATH:-}
+      TLS_CERT: ${TLS_CERT:-}
+      TLS_KEY: ${TLS_KEY:-}
     volumes:
       - backend-data:/data
     ports:
@@ -18,9 +18,12 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        # NEXT_PUBLIC_API_URL is baked into the client bundle at build time.
+        # Set this to the public URL of the backend (e.g. http://yourhost:8080).
+        # Defaults to empty string for same-origin proxy via a reverse proxy.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
     restart: unless-stopped
-    environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
     ports:
       - "3000:3000"
     depends_on:
