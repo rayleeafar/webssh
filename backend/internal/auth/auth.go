@@ -118,6 +118,11 @@ func (s *Service) ValidateSession(token string) (*models.User, error) {
 	return &user, nil
 }
 
+func (s *Service) RevokeSession(token string) error {
+	_, err := s.db.Exec("DELETE FROM sessions WHERE token = ?", token)
+	return err
+}
+
 func generateToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {

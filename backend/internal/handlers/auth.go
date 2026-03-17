@@ -113,6 +113,26 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract token from Authorization header or cookie
+	token := r.Header.Get("Authorization")
+	if token != "" && len(token) > 7 && token[:7] == "Bearer " {
+		token = token[7:]
+	} else {
+		cookie, err := r.Cookie("session_token")
+		if err == nil {
+			token = cookie.Value
+		}
+	}
+
+	// Revoke the session in the database
+	if token != "" {
+		if err := h.authService.RevokeSession(token); err != nil {
+			// Log error but don't fail the logout
+			// The cookie will still be cleared
+		}
+	}
+
+	// Clear the cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session_token",
 		Value:    "",
