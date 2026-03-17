@@ -50,6 +50,7 @@ Build a self-hosted web application (WebSSH Manager) that provides browser-based
 | Round | Change | Reason | Impact on AC |
 |-------|--------|--------|--------------|
 | 0 | Initial plan | - | - |
+| 1 | Rejected Claude's completion/deferment request; kept incomplete work active and added blocking implementation issues discovered during review | Core plan tasks remain unfinished or partially implemented despite claimed completion | AC-1, AC-4, AC-5, AC-6, AC-8 remain incomplete |
 
 #### Active Tasks
 <!-- Map each task to its target Acceptance Criterion -->
@@ -61,21 +62,21 @@ Build a self-hosted web application (WebSSH Manager) that provides browser-based
 | Implement user login endpoint | AC-1 | completed | With session token generation |
 | Implement credential encryption/decryption utilities | AC-2, AC-6 | completed | AES-256-GCM with PBKDF2 |
 | Initialize Next.js 15 project with App Router | AC-1, AC-2, AC-3, AC-4 | completed | Frontend foundation created |
-| Implement Go backend API for node CRUD | AC-2 | pending | Create, read, update, delete nodes |
-| Build Next.js frontend for node management UI | AC-2 | pending | List, add, edit, delete nodes |
+| Implement Go backend API for node CRUD | AC-2 | completed | Handlers and routes exist, but end-to-end UX is still blocked by missing CSRF integration |
+| Build Next.js frontend for node management UI | AC-2 | pending | List/add/delete UI exists, but edit is missing and state-changing actions do not send CSRF tokens |
 | Integrate frontend with backend API | AC-2 | pending | Handle auth tokens |
-| Add validation for node configuration | AC-2 | pending | Host format, port range |
-| Implement WebSocket handler for terminal | AC-3 | pending | Backend terminal proxy |
-| Establish SSH client connections | AC-3 | pending | Using golang.org/x/crypto/ssh |
-| Proxy bidirectional data (WebSocket ↔ SSH) | AC-3 | pending | stdin/stdout piping |
-| Integrate xterm.js in frontend | AC-3 | pending | Terminal rendering |
-| Handle terminal resize events | AC-3 | pending | PTY size negotiation |
-| Implement terminal error handling | AC-3, AC-8 | pending | Graceful disconnection |
-| Implement SFTP session management | AC-4 | pending | Using pkg/sftp |
-| Create REST API for SFTP operations | AC-4 | pending | list, upload, download, delete, mkdir |
-| Build Next.js SFTP file browser UI | AC-4 | pending | Directory navigation |
+| Add validation for node configuration | AC-2 | completed | Host format and port range validation exist in backend handlers |
+| Implement WebSocket handler for terminal | AC-3 | completed | WebSocket endpoint and SSH session setup exist |
+| Establish SSH client connections | AC-3 | completed | Password-based SSH dial path exists; private-key auth still missing |
+| Proxy bidirectional data (WebSocket ↔ SSH) | AC-3 | completed | stdin/stdout/stderr proxying exists |
+| Integrate xterm.js in frontend | AC-3 | completed | Terminal page uses xterm.js and fit addon |
+| Handle terminal resize events | AC-3 | completed | Resize messages are sent and mapped to `WindowChange` |
+| Implement terminal error handling | AC-3, AC-8 | pending | Errors are raw/unsanitized and secure deployment still uses hardcoded `ws://` |
+| Implement SFTP session management | AC-4 | completed | SFTP session creation exists |
+| Create REST API for SFTP operations | AC-4 | completed | Backend list/download/upload/delete/mkdir handlers exist |
+| Build Next.js SFTP file browser UI | AC-4 | pending | Browse/download/delete UI exists, but upload and mkdir flows are missing |
 | Implement file upload functionality | AC-4 | pending | Multipart form handling |
-| Implement file download functionality | AC-4 | pending | Proper content-type headers |
+| Implement file download functionality | AC-4 | completed | Backend and frontend download paths exist |
 | Add file deletion and mkdir operations | AC-4 | pending | Complete SFTP operations |
 | Implement HTTPS/TLS support | AC-5 | pending | Certificate configuration |
 | Add HTTP to HTTPS redirect | AC-5 | pending | Configurable for development |
@@ -88,6 +89,12 @@ Build a self-hosted web application (WebSSH Manager) that provides browser-based
 <!-- Only move tasks here after Codex verification -->
 | AC | Task | Completed Round | Verified Round | Evidence |
 |----|------|-----------------|----------------|----------|
+| AC-1, AC-6 | Initialize Go project with module structure | 0 | 1 | `backend/cmd/server/main.go` builds with `go build ./cmd/server` during review |
+| AC-1, AC-6 | Set up SQLite database schema | 0 | 1 | `backend/internal/database/database.go` initializes `users`, `nodes`, and `sessions` tables automatically |
+| AC-1 | Implement user registration endpoint | 1 | 1 | `backend/internal/handlers/auth.go` exposes `POST /api/auth/register` and backend tests pass |
+| AC-1 | Implement user login endpoint | 1 | 1 | `backend/internal/handlers/auth.go` exposes `POST /api/auth/login` and backend tests pass |
+| AC-2, AC-6 | Implement credential encryption/decryption utilities | 0 | 1 | `backend/pkg/crypto/crypto.go` and `go test ./...` verified the crypto package |
+| AC-1, AC-2, AC-3, AC-4 | Initialize Next.js project with App Router | 0 | 1 | App Router pages exist under `frontend/app`, though feature completeness is still pending |
 
 ### Explicitly Deferred
 <!-- Items here require strong justification -->
@@ -98,3 +105,9 @@ Build a self-hosted web application (WebSSH Manager) that provides browser-based
 <!-- Issues discovered during implementation -->
 | Issue | Discovered Round | Blocking AC | Resolution Path |
 |-------|-----------------|-------------|-----------------|
+| Frontend does not fetch/send CSRF tokens, so node create/delete and SFTP delete/upload/mkdir requests fail with 403 | 1 | AC-2, AC-4, AC-5, AC-8 | Add session-bound CSRF issuance/validation and wire the frontend to include the token on every state-changing request |
+| Credential encryption is derived from username plus salt rather than the user's password, and schema lacks a dedicated `credentials` table from the plan | 1 | AC-2, AC-6 | Rework key derivation around authenticated password material/session secret and split encrypted credentials into their own table |
+| Logout only clears the browser cookie and does not revoke the server-side session token | 1 | AC-1 | Delete the session from SQLite during logout and verify rejected reuse of the old token |
+| TLS support is incomplete: redirect is hardcoded to `:8080`, not configurable, and secure frontend transport still hardcodes `http://` and `ws://` URLs | 1 | AC-5 | Add explicit HTTPS/redirect config and derive API/WebSocket origins from runtime environment so HTTPS deployments use HTTPS/WSS |
+| SFTP and node management UIs are incomplete relative to the plan | 1 | AC-2, AC-4 | Add node edit UI plus SFTP upload and mkdir flows, and verify them end to end |
+| Existing tests mostly cover helper functions and method guards, not the acceptance-criteria success/failure cases | 1 | AC-1, AC-2, AC-3, AC-4, AC-5, AC-6, AC-8 | Add integration-style handler tests for auth, node CRUD, CSRF, logout revocation, and SFTP/terminal failure paths |

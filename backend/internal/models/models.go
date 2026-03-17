@@ -7,6 +7,7 @@ type User struct {
 	Username          string    `json:"username"`
 	PasswordHash      string    `json:"-"`
 	EncryptionKeySalt string    `json:"-"`
+	EncryptionKey     string    `json:"-"`
 	CreatedAt         time.Time `json:"created_at"`
 }
 

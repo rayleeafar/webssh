@@ -2,6 +2,7 @@ package sftp
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -54,7 +55,7 @@ func (h *SFTPHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sftpClient, cleanup, err := h.getSFTPClient(nodeID, user.ID, user.Username, user.EncryptionKeySalt)
+	sftpClient, cleanup, err := h.getSFTPClient(nodeID, user.ID, user.EncryptionKey)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -103,7 +104,7 @@ func (h *SFTPHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sftpClient, cleanup, err := h.getSFTPClient(nodeID, user.ID, user.Username, user.EncryptionKeySalt)
+	sftpClient, cleanup, err := h.getSFTPClient(nodeID, user.ID, user.EncryptionKey)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -158,7 +159,7 @@ func (h *SFTPHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	sftpClient, cleanup, err := h.getSFTPClient(nodeID, user.ID, user.Username, user.EncryptionKeySalt)
+	sftpClient, cleanup, err := h.getSFTPClient(nodeID, user.ID, user.EncryptionKey)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -202,7 +203,7 @@ func (h *SFTPHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sftpClient, cleanup, err := h.getSFTPClient(nodeID, user.ID, user.Username, user.EncryptionKeySalt)
+	sftpClient, cleanup, err := h.getSFTPClient(nodeID, user.ID, user.EncryptionKey)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -239,7 +240,7 @@ func (h *SFTPHandler) Mkdir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sftpClient, cleanup, err := h.getSFTPClient(req.NodeID, user.ID, user.Username, user.EncryptionKeySalt)
+	sftpClient, cleanup, err := h.getSFTPClient(req.NodeID, user.ID, user.EncryptionKey)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -254,7 +255,7 @@ func (h *SFTPHandler) Mkdir(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-func (h *SFTPHandler) getSFTPClient(nodeID, userID int, username, salt string) (*sftp.Client, func(), error) {
+func (h *SFTPHandler) getSFTPClient(nodeID, userID int, encryptionKey string) (*sftp.Client, func(), error) {
 	var host, nodeUsername, encryptedCreds string
 	var port, ownerID int
 
@@ -274,9 +275,10 @@ func (h *SFTPHandler) getSFTPClient(nodeID, userID int, username, salt string) (
 		return nil, nil, fmt.Errorf("forbidden")
 	}
 
-	key, err := crypto.DeriveKey(username, salt)
+	// Decode the encryption key from the session
+	key, err := base64.StdEncoding.DecodeString(encryptionKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to derive key")
+		return nil, nil, fmt.Errorf("failed to decode encryption key")
 	}
 
 	credentials, err := crypto.Decrypt(encryptedCreds, key)

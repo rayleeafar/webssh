@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"log"
@@ -50,14 +51,13 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var host, username, encryptedCreds, salt string
+	var host, username, encryptedCreds string
 	var port, ownerID int
 	err = h.db.QueryRow(`
-		SELECT n.host, n.port, n.username, n.encrypted_credentials, n.user_id, u.encryption_key_salt
+		SELECT n.host, n.port, n.username, n.encrypted_credentials, n.user_id
 		FROM nodes n
-		JOIN users u ON n.user_id = u.id
 		WHERE n.id = ?
-	`, nodeID).Scan(&host, &port, &username, &encryptedCreds, &ownerID, &salt)
+	`, nodeID).Scan(&host, &port, &username, &encryptedCreds, &ownerID)
 	if err == sql.ErrNoRows {
 		http.Error(w, "Node not found", http.StatusNotFound)
 		return
@@ -72,9 +72,10 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	key, err := crypto.DeriveKey(user.Username, salt)
+	// Decode the encryption key from the session
+	key, err := base64.StdEncoding.DecodeString(user.EncryptionKey)
 	if err != nil {
-		http.Error(w, "Failed to derive key", http.StatusInternalServerError)
+		http.Error(w, "Failed to decode encryption key", http.StatusInternalServerError)
 		return
 	}
 

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -78,9 +79,10 @@ func (h *NodeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		credentials = req.PrivateKey
 	}
 
-	key, err := crypto.DeriveKey(user.Username, user.EncryptionKeySalt)
+	// Decode the encryption key from the session
+	key, err := base64.StdEncoding.DecodeString(user.EncryptionKey)
 	if err != nil {
-		http.Error(w, "Failed to derive encryption key", http.StatusInternalServerError)
+		http.Error(w, "Failed to decode encryption key", http.StatusInternalServerError)
 		return
 	}
 
@@ -209,9 +211,10 @@ func (h *NodeHandler) Update(w http.ResponseWriter, r *http.Request) {
 			credentials = req.PrivateKey
 		}
 
-		key, err := crypto.DeriveKey(user.Username, user.EncryptionKeySalt)
+		// Decode the encryption key from the session
+		key, err := base64.StdEncoding.DecodeString(user.EncryptionKey)
 		if err != nil {
-			http.Error(w, "Failed to derive encryption key", http.StatusInternalServerError)
+			http.Error(w, "Failed to decode encryption key", http.StatusInternalServerError)
 			return
 		}
 

@@ -69,6 +69,15 @@ func (s *Service) Login(username, password string) (*models.Session, error) {
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
+	// Derive encryption key from password
+	encryptionKey, err := crypto.DeriveKey(password, user.EncryptionKeySalt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive encryption key: %w", err)
+	}
+
+	// Encode the key as base64 for storage
+	encryptionKeyB64 := base64.StdEncoding.EncodeToString(encryptionKey)
+
 	token, err := generateToken()
 	if err != nil {
 		return nil, err
@@ -76,8 +85,8 @@ func (s *Service) Login(username, password string) (*models.Session, error) {
 
 	expiresAt := time.Now().Add(24 * time.Hour)
 	_, err = s.db.Exec(
-		"INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
-		token, user.ID, expiresAt,
+		"INSERT INTO sessions (token, user_id, encryption_key, expires_at) VALUES (?, ?, ?, ?)",
+		token, user.ID, encryptionKeyB64, expiresAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
@@ -94,11 +103,11 @@ func (s *Service) Login(username, password string) (*models.Session, error) {
 func (s *Service) ValidateSession(token string) (*models.User, error) {
 	var user models.User
 	err := s.db.QueryRow(`
-		SELECT u.id, u.username, u.encryption_key_salt
+		SELECT u.id, u.username, u.encryption_key_salt, s.encryption_key
 		FROM users u
 		JOIN sessions s ON u.id = s.user_id
 		WHERE s.token = ? AND s.expires_at > ?
-	`, token, time.Now()).Scan(&user.ID, &user.Username, &user.EncryptionKeySalt)
+	`, token, time.Now()).Scan(&user.ID, &user.Username, &user.EncryptionKeySalt, &user.EncryptionKey)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("invalid or expired session")
