@@ -10,3 +10,4 @@ data/
 *.db-journal
 .humanize*
 docs/plan2.md
+frontend/tsconfig.tsbuildinfo
