@@ -15,15 +15,12 @@ export default function RegisterPage() {
     e.preventDefault()
     setError('')
     setLoading(true)
-
     try {
       const res = await apiPost('/api/auth/register', { username, password })
-
       if (!res.ok) {
         const text = await res.text()
         throw new Error(text || 'Registration failed')
       }
-
       router.push('/login')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed')
@@ -33,59 +30,205 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-lg shadow">
-        <div>
-          <h2 className="text-3xl font-bold text-center">Create Account</h2>
-          <p className="mt-2 text-center text-gray-600">Register for WebSSH Manager</p>
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: '#050508',
+        fontFamily: "'Rajdhani', sans-serif",
+      }}
+    >
+      {/* Ambient glow blobs */}
+      <div
+        style={{
+          position: 'fixed',
+          top: '25%',
+          right: '10%',
+          width: 360,
+          height: 360,
+          borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(255,0,255,0.04) 0%, transparent 70%)',
+          pointerEvents: 'none',
+        }}
+      />
+      <div
+        style={{
+          position: 'fixed',
+          bottom: '15%',
+          left: '10%',
+          width: 280,
+          height: 280,
+          borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(0,128,255,0.04) 0%, transparent 70%)',
+          pointerEvents: 'none',
+        }}
+      />
+
+      <div
+        style={{
+          position: 'relative',
+          width: '100%',
+          maxWidth: 400,
+          padding: '48px 40px',
+          background: 'rgba(13,13,26,0.95)',
+          border: '1px solid rgba(0,255,255,0.2)',
+          boxShadow: '0 0 40px rgba(0,255,255,0.08), inset 0 0 60px rgba(0,0,0,0.3)',
+        }}
+        className="corner-tl corner-tr corner-bl corner-br"
+      >
+        {/* Header */}
+        <div style={{ textAlign: 'center', marginBottom: 40 }}>
+          <div
+            style={{
+              fontFamily: "'Orbitron', sans-serif",
+              fontSize: 22,
+              fontWeight: 900,
+              color: '#00ffff',
+              letterSpacing: '0.12em',
+              textShadow: '0 0 20px rgba(0,255,255,0.8), 0 0 40px rgba(0,255,255,0.3)',
+              marginBottom: 8,
+            }}
+          >
+            CREATE ACCOUNT
+          </div>
+          <div
+            style={{
+              fontFamily: "'Orbitron', sans-serif",
+              fontSize: 11,
+              color: '#6070a0',
+              letterSpacing: '0.3em',
+            }}
+          >
+            NEW OPERATOR REGISTRATION
+          </div>
         </div>
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+
+        <form onSubmit={handleSubmit}>
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+            <div
+              style={{
+                marginBottom: 20,
+                padding: '10px 14px',
+                background: 'rgba(255,48,96,0.1)',
+                border: '1px solid rgba(255,48,96,0.3)',
+                color: '#ff3060',
+                fontSize: 13,
+                letterSpacing: '0.02em',
+              }}
+            >
               {error}
             </div>
           )}
-          <div className="space-y-4">
-            <div>
-              <label htmlFor="username" className="block text-sm font-medium text-gray-700">
-                Username
-              </label>
-              <input
-                id="username"
-                type="text"
-                required
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
+
+          <div style={{ marginBottom: 28 }}>
+            <label
+              style={{
+                display: 'block',
+                fontSize: 11,
+                letterSpacing: '0.2em',
+                color: '#6070a0',
+                marginBottom: 8,
+                fontFamily: "'Orbitron', sans-serif",
+              }}
+            >
+              USERNAME
+            </label>
+            <input
+              type="text"
+              required
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="neon-input"
+              autoComplete="username"
+            />
           </div>
+
+          <div style={{ marginBottom: 36 }}>
+            <label
+              style={{
+                display: 'block',
+                fontSize: 11,
+                letterSpacing: '0.2em',
+                color: '#6070a0',
+                marginBottom: 8,
+                fontFamily: "'Orbitron', sans-serif",
+              }}
+            >
+              PASSWORD
+            </label>
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="neon-input"
+              autoComplete="new-password"
+            />
+          </div>
+
           <button
             type="submit"
             disabled={loading}
-            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+            style={{
+              width: '100%',
+              padding: '12px',
+              background: 'transparent',
+              border: '1px solid rgba(0,255,255,0.6)',
+              color: '#00ffff',
+              fontFamily: "'Orbitron', sans-serif",
+              fontSize: 12,
+              letterSpacing: '0.25em',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              opacity: loading ? 0.6 : 1,
+              boxShadow: '0 0 12px rgba(0,255,255,0.2), inset 0 0 12px rgba(0,255,255,0.03)',
+              transition: 'box-shadow 0.2s, background 0.2s',
+            }}
+            onMouseEnter={(e) => {
+              if (!loading) {
+                const t = e.currentTarget
+                t.style.boxShadow = '0 0 20px rgba(0,255,255,0.5), inset 0 0 20px rgba(0,255,255,0.08)'
+                t.style.background = 'rgba(0,255,255,0.05)'
+              }
+            }}
+            onMouseLeave={(e) => {
+              const t = e.currentTarget
+              t.style.boxShadow = '0 0 12px rgba(0,255,255,0.2), inset 0 0 12px rgba(0,255,255,0.03)'
+              t.style.background = 'transparent'
+            }}
           >
-            {loading ? 'Creating account...' : 'Register'}
+            {loading ? 'CREATING...' : 'REGISTER OPERATOR'}
           </button>
-          <div className="text-center">
-            <a href="/login" className="text-sm text-blue-600 hover:text-blue-500">
-              Already have an account? Sign in
+
+          <div style={{ textAlign: 'center', marginTop: 24 }}>
+            <a
+              href="/login"
+              style={{
+                fontSize: 12,
+                color: '#6070a0',
+                letterSpacing: '0.1em',
+                textDecoration: 'none',
+                transition: 'color 0.2s',
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = '#00ffff' }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = '#6070a0' }}
+            >
+              Already registered? <span style={{ color: '#00ffff' }}>SIGN IN</span>
             </a>
           </div>
         </form>
+
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: '10%',
+            width: '80%',
+            height: 1,
+            background: 'linear-gradient(90deg, transparent, rgba(0,255,255,0.4), transparent)',
+          }}
+        />
       </div>
     </div>
   )

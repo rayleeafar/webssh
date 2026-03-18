@@ -66,6 +66,7 @@ func main() {
 	authService := auth.NewService(db, masterKey)
 	authHandler := handlers.NewAuthHandler(authService, cfg.EnableTLS)
 	nodeHandler := handlers.NewNodeHandler(db)
+	sysInfoHandler := handlers.NewSysInfoHandler(db)
 	terminalHandler := ssh.NewTerminalHandler(db, authService)
 	sftpHandler := sftp.NewSFTPHandler(db)
 
@@ -95,16 +96,24 @@ func main() {
 		}
 	}))))
 
-	mux.Handle("/api/nodes/", authMiddleware(csrfMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPut:
-			nodeHandler.Update(w, r)
-		case http.MethodDelete:
-			nodeHandler.Delete(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	mux.Handle("/api/nodes/", authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// GET /api/nodes/{id}/sysinfo does not need CSRF (read-only)
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/sysinfo") {
+			sysInfoHandler.Get(w, r)
+			return
 		}
-	}))))
+		// All other methods require CSRF
+		csrfMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodPut:
+				nodeHandler.Update(w, r)
+			case http.MethodDelete:
+				nodeHandler.Delete(w, r)
+			default:
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		})).ServeHTTP(w, r)
+	})))
 
 	mux.Handle("/ws/terminal", authMiddleware(http.HandlerFunc(terminalHandler.HandleWebSocket)))
 

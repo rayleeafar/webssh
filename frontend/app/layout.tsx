@@ -3,7 +3,7 @@ import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
   title: 'WebSSH Manager',
-  description: 'SSH + SFTP in your browser',
+  description: 'SSH + SFTP in your browser — Neon Noir edition',
 }
 
 export default function RootLayout({
