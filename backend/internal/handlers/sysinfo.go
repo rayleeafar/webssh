@@ -160,6 +160,21 @@ func (h *SysInfoHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verify the node exists and belongs to the authenticated user before
+	// loading any cached data or attempting an SSH refresh.
+	var ownerID int
+	if err := h.db.QueryRow("SELECT user_id FROM nodes WHERE id = ?", nodeID).Scan(&ownerID); err == sql.ErrNoRows {
+		http.Error(w, "Node not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	if ownerID != user.ID {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
 	// Load cached data from node_sysinfo table.
 	var cached *SysInfoResponse
 	var cachedRow SysInfoResponse
