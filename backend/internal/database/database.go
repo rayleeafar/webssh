@@ -108,6 +108,10 @@ func migrateNodes(db *sql.DB) error {
 				proxy_port INTEGER NOT NULL DEFAULT 0,
 				proxy_username TEXT NOT NULL DEFAULT '',
 				proxy_credential_id INTEGER NOT NULL DEFAULT 0,
+				jump_proxy_type TEXT NOT NULL DEFAULT '',
+				jump_proxy_host TEXT NOT NULL DEFAULT '',
+				jump_proxy_port INTEGER NOT NULL DEFAULT 0,
+				jump_proxy_credential_id INTEGER NOT NULL DEFAULT 0,
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -150,6 +154,19 @@ func migrateNodes(db *sql.DB) error {
 			{"proxy_credential_id", "INTEGER NOT NULL DEFAULT 0"},
 		}
 		for _, col := range proxyColumns {
+			var count int
+			db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('nodes') WHERE name=?", col.name).Scan(&count)
+			if count == 0 {
+				db.Exec("ALTER TABLE nodes ADD COLUMN " + col.name + " " + col.def)
+			}
+		}
+		jumpProxyColumns := []struct{ name, def string }{
+			{"jump_proxy_type", "TEXT NOT NULL DEFAULT ''"},
+			{"jump_proxy_host", "TEXT NOT NULL DEFAULT ''"},
+			{"jump_proxy_port", "INTEGER NOT NULL DEFAULT 0"},
+			{"jump_proxy_credential_id", "INTEGER NOT NULL DEFAULT 0"},
+		}
+		for _, col := range jumpProxyColumns {
 			var count int
 			db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('nodes') WHERE name=?", col.name).Scan(&count)
 			if count == 0 {

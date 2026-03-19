@@ -47,12 +47,23 @@ type BatchNodeResult struct {
 
 // nodeCredentials holds the data needed to open an SSH connection to a node.
 type nodeCredentials struct {
-	nodeID         int
-	host           string
-	port           int
-	username       string
-	authType       string
-	encryptedCreds string
+	nodeID                int
+	host                  string
+	port                  int
+	username              string
+	authType              string
+	encryptedCreds        string
+	proxyType             string
+	proxyHost             string
+	proxyPort             int
+	proxyUsername         string
+	proxyCredentialID     int
+	proxyEncCreds         string // loaded separately
+	jumpProxyType         string
+	jumpProxyHost         string
+	jumpProxyPort         int
+	jumpProxyCredentialID int
+	jumpProxyEncCreds     string
 }
 
 // Exec handles POST /api/batch/exec — runs a command on all requested nodes
@@ -105,11 +116,17 @@ func (h *BatchHandler) Exec(w http.ResponseWriter, r *http.Request) {
 		var nc nodeCredentials
 		nc.nodeID = nid
 		queryErr := h.db.QueryRow(`
-			SELECT n.host, n.port, n.username, c.auth_type, c.encrypted_value
+			SELECT n.host, n.port, n.username, c.auth_type, c.encrypted_value,
+			       COALESCE(n.proxy_type,''), COALESCE(n.proxy_host,''), COALESCE(n.proxy_port,0),
+			       COALESCE(n.proxy_username,''), COALESCE(n.proxy_credential_id,0),
+			       COALESCE(n.jump_proxy_type,''), COALESCE(n.jump_proxy_host,''),
+			       COALESCE(n.jump_proxy_port,0), COALESCE(n.jump_proxy_credential_id,0)
 			FROM nodes n
 			JOIN credentials c ON n.credential_id = c.id
 			WHERE n.id = ? AND n.user_id = ?`, nid, user.ID,
-		).Scan(&nc.host, &nc.port, &nc.username, &nc.authType, &nc.encryptedCreds)
+		).Scan(&nc.host, &nc.port, &nc.username, &nc.authType, &nc.encryptedCreds,
+			&nc.proxyType, &nc.proxyHost, &nc.proxyPort, &nc.proxyUsername, &nc.proxyCredentialID,
+			&nc.jumpProxyType, &nc.jumpProxyHost, &nc.jumpProxyPort, &nc.jumpProxyCredentialID)
 		if queryErr == sql.ErrNoRows {
 			http.Error(w, fmt.Sprintf("node %d not found or not owned by user", nid), http.StatusForbidden)
 			return
@@ -119,6 +136,22 @@ func (h *BatchHandler) Exec(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		nodeCreds = append(nodeCreds, nc)
+	}
+
+	// Second pass: load proxy credentials for nodes that reference them.
+	for i, nc := range nodeCreds {
+		if nc.proxyCredentialID > 0 {
+			var pe, pt string
+			h.db.QueryRow("SELECT auth_type, encrypted_value FROM credentials WHERE id = ? AND user_id = ?",
+				nc.proxyCredentialID, user.ID).Scan(&pt, &pe)
+			nodeCreds[i].proxyEncCreds = pe
+		}
+		if nc.jumpProxyCredentialID > 0 {
+			var pe, pt string
+			h.db.QueryRow("SELECT auth_type, encrypted_value FROM credentials WHERE id = ? AND user_id = ?",
+				nc.jumpProxyCredentialID, user.ID).Scan(&pt, &pe)
+			nodeCreds[i].jumpProxyEncCreds = pe
+		}
 	}
 
 	// Execute command concurrently on all nodes within the requested timeout.
@@ -170,15 +203,62 @@ func runCommandOnNode(ctx context.Context, nc nodeCredentials, cmd string, encKe
 		return result
 	}
 
+	// Decrypt proxy credentials.
+	var proxyCreds, jumpProxyCreds string
+	if nc.proxyEncCreds != "" {
+		proxyCreds, _ = crypto.Decrypt(nc.proxyEncCreds, encKey)
+	}
+	if nc.jumpProxyEncCreds != "" {
+		jumpProxyCreds, _ = crypto.Decrypt(nc.jumpProxyEncCreds, encKey)
+	}
+
+	// Build JumpSSHConfig for jump-type proxy.
+	var jumpSSHConfig *gossh.ClientConfig
+	if nc.proxyType == "jump" && nc.proxyEncCreds != "" {
+		jcreds, _ := crypto.Decrypt(nc.proxyEncCreds, encKey)
+		jauth, _ := sshutil.BuildAuthMethod(nc.authType, jcreds)
+		jumpSSHConfig = &gossh.ClientConfig{
+			User:            nc.proxyUsername,
+			Auth:            jauth,
+			HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec
+		}
+	}
+
+	dialCfg := sshutil.NodeDialConfig{
+		TargetHost:     nc.host,
+		TargetPort:     nc.port,
+		ProxyType:      nc.proxyType,
+		ProxyHost:      nc.proxyHost,
+		ProxyPort:      nc.proxyPort,
+		ProxyUsername:  nc.proxyUsername,
+		ProxyCreds:     proxyCreds,
+		JumpSSHConfig:  jumpSSHConfig,
+		JumpProxyType:  nc.jumpProxyType,
+		JumpProxyHost:  nc.jumpProxyHost,
+		JumpProxyPort:  nc.jumpProxyPort,
+		JumpProxyCreds: jumpProxyCreds,
+	}
+
 	// Dial in a separate goroutine so that context cancellation is honoured.
 	dialCh := make(chan dialResult, 1)
 	go func() {
-		c, e := gossh.Dial("tcp", fmt.Sprintf("%s:%d", nc.host, nc.port), &gossh.ClientConfig{
+		conn, e := sshutil.DialTarget(dialCfg)
+		if e != nil {
+			dialCh <- dialResult{nil, e}
+			return
+		}
+		addr := fmt.Sprintf("%s:%d", nc.host, nc.port)
+		c, chans, reqs, e := gossh.NewClientConn(conn, addr, &gossh.ClientConfig{
 			User:            nc.username,
 			Auth:            authMethods,
 			HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec
 		})
-		dialCh <- dialResult{c, e}
+		if e != nil {
+			conn.Close()
+			dialCh <- dialResult{nil, e}
+			return
+		}
+		dialCh <- dialResult{gossh.NewClient(c, chans, reqs), nil}
 	}()
 
 	var client *gossh.Client

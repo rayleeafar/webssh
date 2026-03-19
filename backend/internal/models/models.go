@@ -27,7 +27,12 @@ type Node struct {
 	ProxyPort         int    `json:"proxy_port"`
 	ProxyUsername     string `json:"proxy_username"`
 	ProxyCredentialID int    `json:"proxy_credential_id"`
-	CreatedAt         time.Time `json:"created_at"`
+	// Jump host's own upstream proxy
+	JumpProxyType         string `json:"jump_proxy_type"`
+	JumpProxyHost         string `json:"jump_proxy_host"`
+	JumpProxyPort         int    `json:"jump_proxy_port"`
+	JumpProxyCredentialID int    `json:"jump_proxy_credential_id"`
+	CreatedAt             time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 

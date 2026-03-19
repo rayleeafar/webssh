@@ -26,6 +26,11 @@ type NodeDialConfig struct {
 	ProxyCreds    string // decrypted proxy credentials (password or private key)
 	// Jump server SSH auth (only used when ProxyType == "jump")
 	JumpSSHConfig *gossh.ClientConfig
+	// Jump host's own upstream proxy (for jump-behind-proxy chains)
+	JumpProxyType  string
+	JumpProxyHost  string
+	JumpProxyPort  int
+	JumpProxyCreds string // decrypted
 }
 
 // DialTarget is the exported entry point for the sftp package and other consumers.
@@ -38,6 +43,7 @@ func DialTarget(cfg NodeDialConfig) (net.Conn, error) {
 // proxy or jump-server routing.
 func dialTarget(cfg NodeDialConfig) (net.Conn, error) {
 	targetAddr := fmt.Sprintf("%s:%d", cfg.TargetHost, cfg.TargetPort)
+	var err error
 
 	switch cfg.ProxyType {
 	case "socks5":
@@ -56,21 +62,46 @@ func dialTarget(cfg NodeDialConfig) (net.Conn, error) {
 		return httpConnectDial(cfg.ProxyHost, cfg.ProxyPort, cfg.ProxyUsername, cfg.ProxyCreds, cfg.TargetHost, cfg.TargetPort)
 
 	case "jump":
+		jumpAddr := fmt.Sprintf("%s:%d", cfg.ProxyHost, cfg.ProxyPort)
+
+		var jumpNetConn net.Conn
+		if cfg.JumpProxyType != "" {
+			// Route the connection to the jump host through its own proxy
+			jumpNetConn, err = dialTarget(NodeDialConfig{
+				TargetHost: cfg.ProxyHost,
+				TargetPort: cfg.ProxyPort,
+				ProxyType:  cfg.JumpProxyType,
+				ProxyHost:  cfg.JumpProxyHost,
+				ProxyPort:  cfg.JumpProxyPort,
+				ProxyCreds: cfg.JumpProxyCreds,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("dial jump host via proxy: %w", err)
+			}
+		} else {
+			jumpNetConn, err = net.Dial("tcp", jumpAddr)
+			if err != nil {
+				return nil, fmt.Errorf("dial jump host: %w", err)
+			}
+		}
+
+		// Establish SSH client on the jump host connection
 		if cfg.JumpSSHConfig == nil {
+			jumpNetConn.Close()
 			return nil, fmt.Errorf("jump host SSH config is required")
 		}
-		jumpAddr := fmt.Sprintf("%s:%d", cfg.ProxyHost, cfg.ProxyPort)
-		jumpClient, err := gossh.Dial("tcp", jumpAddr, cfg.JumpSSHConfig)
+		c, chans, reqs, err := gossh.NewClientConn(jumpNetConn, jumpAddr, cfg.JumpSSHConfig)
 		if err != nil {
-			return nil, fmt.Errorf("jump host connection failed: %w", err)
+			jumpNetConn.Close()
+			return nil, fmt.Errorf("jump host SSH handshake failed: %w", err)
 		}
-		// Dial the target through the jump host's TCP channel
+		jumpClient := gossh.NewClient(c, chans, reqs)
+
 		conn, err := jumpClient.Dial("tcp", targetAddr)
 		if err != nil {
 			jumpClient.Close()
 			return nil, fmt.Errorf("jump host dial to target failed: %w", err)
 		}
-		// Wrap conn so closing it also closes the jump client
 		return &jumpConn{Conn: conn, jumpClient: jumpClient}, nil
 
 	default:

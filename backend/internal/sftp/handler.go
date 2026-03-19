@@ -336,16 +336,21 @@ func (h *SFTPHandler) getSFTPClient(nodeID, userID int, encryptionKey string) (s
 	var port, ownerID int
 	var proxyType, proxyHost, proxyUsername string
 	var proxyPort, proxyCredentialID int
+	var jumpProxyType, jumpProxyHost string
+	var jumpProxyPort, jumpProxyCredentialID int
 
 	err := h.db.QueryRow(`
 		SELECT n.host, n.port, n.username, c.auth_type, c.encrypted_value, n.user_id,
 		       COALESCE(n.proxy_type,''), COALESCE(n.proxy_host,''), COALESCE(n.proxy_port,0),
-		       COALESCE(n.proxy_username,''), COALESCE(n.proxy_credential_id,0)
+		       COALESCE(n.proxy_username,''), COALESCE(n.proxy_credential_id,0),
+		       COALESCE(n.jump_proxy_type,''), COALESCE(n.jump_proxy_host,''),
+		       COALESCE(n.jump_proxy_port,0), COALESCE(n.jump_proxy_credential_id,0)
 		FROM nodes n
 		JOIN credentials c ON n.credential_id = c.id
 		WHERE n.id = ?
 	`, nodeID).Scan(&host, &port, &nodeUsername, &authType, &encryptedCreds, &ownerID,
-		&proxyType, &proxyHost, &proxyPort, &proxyUsername, &proxyCredentialID)
+		&proxyType, &proxyHost, &proxyPort, &proxyUsername, &proxyCredentialID,
+		&jumpProxyType, &jumpProxyHost, &jumpProxyPort, &jumpProxyCredentialID)
 	if err == sql.ErrNoRows {
 		return nil, nil, fmt.Errorf("node not found")
 	}
@@ -391,14 +396,52 @@ func (h *SFTPHandler) getSFTPClient(nodeID, userID int, encryptionKey string) (s
 			).Scan(&proxyAuthType, &proxyEncCreds)
 			proxyCreds, _ = crypto.Decrypt(proxyEncCreds, key)
 		}
+
+		// Build JumpSSHConfig when proxy type is "jump".
+		var jumpSSHConfig *ssh.ClientConfig
+		if proxyType == "jump" && proxyCredentialID > 0 {
+			var jumpAuthType, jumpEncCreds string
+			h.db.QueryRow(
+				"SELECT auth_type, encrypted_value FROM credentials WHERE id = ? AND user_id = ?",
+				proxyCredentialID, userID,
+			).Scan(&jumpAuthType, &jumpEncCreds)
+			if jumpEncCreds != "" {
+				jumpCreds, _ := crypto.Decrypt(jumpEncCreds, key)
+				jumpAuthMethods, _ := sshutil.BuildAuthMethod(jumpAuthType, jumpCreds)
+				jumpSSHConfig = &ssh.ClientConfig{
+					User:            proxyUsername,
+					Auth:            jumpAuthMethods,
+					HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+				}
+			}
+		}
+
+		// Fetch jump proxy credentials if the jump host has its own upstream proxy.
+		var jumpProxyCreds string
+		if jumpProxyType != "" && jumpProxyCredentialID > 0 {
+			var jpAuthType, jpEncCreds string
+			h.db.QueryRow(
+				"SELECT auth_type, encrypted_value FROM credentials WHERE id = ? AND user_id = ?",
+				jumpProxyCredentialID, userID,
+			).Scan(&jpAuthType, &jpEncCreds)
+			if jpEncCreds != "" {
+				jumpProxyCreds, _ = crypto.Decrypt(jpEncCreds, key)
+			}
+		}
+
 		cfg := sshutil.NodeDialConfig{
-			TargetHost:    host,
-			TargetPort:    port,
-			ProxyType:     proxyType,
-			ProxyHost:     proxyHost,
-			ProxyPort:     proxyPort,
-			ProxyUsername: proxyUsername,
-			ProxyCreds:    proxyCreds,
+			TargetHost:     host,
+			TargetPort:     port,
+			ProxyType:      proxyType,
+			ProxyHost:      proxyHost,
+			ProxyPort:      proxyPort,
+			ProxyUsername:  proxyUsername,
+			ProxyCreds:     proxyCreds,
+			JumpSSHConfig:  jumpSSHConfig,
+			JumpProxyType:  jumpProxyType,
+			JumpProxyHost:  jumpProxyHost,
+			JumpProxyPort:  jumpProxyPort,
+			JumpProxyCreds: jumpProxyCreds,
 		}
 		conn, err := sshutil.DialTarget(cfg)
 		if err != nil {

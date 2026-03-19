@@ -308,6 +308,67 @@ func (h *SysInfoHandler) Get(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(info) //nolint:errcheck
 }
 
+// GetCached returns the last-cached sysinfo for a node without performing a
+// live SSH refresh. Returns 404 if no cached data exists.
+func (h *SysInfoHandler) GetCached(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	// path: /api/nodes/{id}/sysinfo/cached
+	if len(parts) < 4 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	nodeID, err := strconv.Atoi(parts[2])
+	if err != nil {
+		http.Error(w, "Invalid node ID", http.StatusBadRequest)
+		return
+	}
+
+	// Verify ownership
+	var ownerID int
+	if err := h.db.QueryRow("SELECT user_id FROM nodes WHERE id = ?", nodeID).Scan(&ownerID); err == sql.ErrNoRows {
+		http.Error(w, "Node not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	if ownerID != user.ID {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	// Return cached row or 404
+	var cached SysInfoResponse
+	err = h.db.QueryRow(`
+		SELECT hostname, os, kernel, uptime, cpu_model, cpu_cores, load_avg,
+		       mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr
+		FROM node_sysinfo WHERE node_id = ?`, nodeID).Scan(
+		&cached.Hostname, &cached.OS, &cached.Kernel, &cached.Uptime,
+		&cached.CPUModel, &cached.CPUCores, &cached.LoadAvg,
+		&cached.MemTotal, &cached.MemUsed,
+		&cached.DiskTotal, &cached.DiskUsed, &cached.DiskPct, &cached.IPAddr,
+	)
+	if err == sql.ErrNoRows {
+		http.Error(w, "No cached data", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cached) //nolint:errcheck
+}
+
 func parseSysInfoKV(info *SysInfoResponse, k, v string) {
 	switch k {
 	case "HOSTNAME":

@@ -474,6 +474,57 @@ func TestHTTPConnectDial_Non200(t *testing.T) {
 	<-done
 }
 
+// TestDialTarget_JumpNoSSHConfig verifies that dialTarget with ProxyType="jump"
+// returns an error containing "jump host SSH config is required" when JumpSSHConfig is nil.
+func TestDialTarget_JumpNoSSHConfig(t *testing.T) {
+	cfg := NodeDialConfig{
+		TargetHost:    "127.0.0.1",
+		TargetPort:    22,
+		ProxyType:     "jump",
+		ProxyHost:     "127.0.0.1",
+		ProxyPort:     1, // port 1 — unlikely to be listening
+		JumpSSHConfig: nil,
+	}
+	conn, err := dialTarget(cfg)
+	if err == nil {
+		conn.Close()
+		t.Fatal("expected an error when JumpSSHConfig is nil, got none")
+	}
+	errStr := err.Error()
+	if !contains(errStr, "jump host SSH config is required") && !contains(errStr, "dial jump host") {
+		t.Errorf("expected jump-related error, got: %v", err)
+	}
+}
+
+// TestDialTarget_JumpUnreachable verifies that dialTarget with ProxyType="jump"
+// and a real JumpSSHConfig but an unreachable jump address returns a connection error.
+func TestDialTarget_JumpUnreachable(t *testing.T) {
+	// Build a minimal ssh.ClientConfig for the jump host (it won't actually connect).
+	jumpCfg := &gossh.ClientConfig{
+		User:            "testuser",
+		Auth:            []gossh.AuthMethod{gossh.Password("testpass")},
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(),
+	}
+	cfg := NodeDialConfig{
+		TargetHost:    "127.0.0.1",
+		TargetPort:    22,
+		ProxyType:     "jump",
+		ProxyHost:     "127.0.0.1",
+		ProxyPort:     1, // port 1 — not listening, connection refused
+		JumpSSHConfig: jumpCfg,
+	}
+	conn, err := dialTarget(cfg)
+	if err == nil {
+		conn.Close()
+		t.Fatal("expected an error dialing unreachable jump host, got none")
+	}
+	// Expect a connection error, not a nil-config error.
+	if !contains(err.Error(), "dial jump host") && !contains(err.Error(), "connection refused") &&
+		!contains(err.Error(), "connect") {
+		t.Errorf("expected a connection error, got: %v", err)
+	}
+}
+
 // contains is a simple case-sensitive substring check used in tests.
 func contains(s, sub string) bool {
 	return len(sub) <= len(s) && (sub == "" || func() bool {

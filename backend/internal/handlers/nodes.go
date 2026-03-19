@@ -24,46 +24,58 @@ func NewNodeHandler(db *sql.DB) *NodeHandler {
 }
 
 type CreateNodeRequest struct {
-	Name              string `json:"name"`
-	Host              string `json:"host"`
-	Port              int    `json:"port"`
-	Username          string `json:"username"`
-	Password          string `json:"password,omitempty"`
-	PrivateKey        string `json:"private_key,omitempty"`
-	ProxyType         string `json:"proxy_type,omitempty"`
-	ProxyHost         string `json:"proxy_host,omitempty"`
-	ProxyPort         int    `json:"proxy_port,omitempty"`
-	ProxyUsername     string `json:"proxy_username,omitempty"`
-	ProxyCredentialID int    `json:"proxy_credential_id,omitempty"`
+	Name                  string `json:"name"`
+	Host                  string `json:"host"`
+	Port                  int    `json:"port"`
+	Username              string `json:"username"`
+	Password              string `json:"password,omitempty"`
+	PrivateKey            string `json:"private_key,omitempty"`
+	ProxyType             string `json:"proxy_type,omitempty"`
+	ProxyHost             string `json:"proxy_host,omitempty"`
+	ProxyPort             int    `json:"proxy_port,omitempty"`
+	ProxyUsername         string `json:"proxy_username,omitempty"`
+	ProxyCredentialID     int    `json:"proxy_credential_id,omitempty"`
+	JumpProxyType         string `json:"jump_proxy_type,omitempty"`
+	JumpProxyHost         string `json:"jump_proxy_host,omitempty"`
+	JumpProxyPort         int    `json:"jump_proxy_port,omitempty"`
+	JumpProxyCredentialID int    `json:"jump_proxy_credential_id,omitempty"`
 }
 
 type UpdateNodeRequest struct {
-	Name              string `json:"name"`
-	Host              string `json:"host"`
-	Port              int    `json:"port"`
-	Username          string `json:"username"`
-	Password          string `json:"password,omitempty"`
-	PrivateKey        string `json:"private_key,omitempty"`
-	ProxyType         string `json:"proxy_type,omitempty"`
-	ProxyHost         string `json:"proxy_host,omitempty"`
-	ProxyPort         int    `json:"proxy_port,omitempty"`
-	ProxyUsername     string `json:"proxy_username,omitempty"`
-	ProxyCredentialID int    `json:"proxy_credential_id,omitempty"`
+	Name                  string `json:"name"`
+	Host                  string `json:"host"`
+	Port                  int    `json:"port"`
+	Username              string `json:"username"`
+	Password              string `json:"password,omitempty"`
+	PrivateKey            string `json:"private_key,omitempty"`
+	ProxyType             string `json:"proxy_type,omitempty"`
+	ProxyHost             string `json:"proxy_host,omitempty"`
+	ProxyPort             int    `json:"proxy_port,omitempty"`
+	ProxyUsername         string `json:"proxy_username,omitempty"`
+	ProxyCredentialID     int    `json:"proxy_credential_id,omitempty"`
+	JumpProxyType         string `json:"jump_proxy_type,omitempty"`
+	JumpProxyHost         string `json:"jump_proxy_host,omitempty"`
+	JumpProxyPort         int    `json:"jump_proxy_port,omitempty"`
+	JumpProxyCredentialID int    `json:"jump_proxy_credential_id,omitempty"`
 }
 
 type NodeResponse struct {
-	ID                int       `json:"id"`
-	Name              string    `json:"name"`
-	Host              string    `json:"host"`
-	Port              int       `json:"port"`
-	Username          string    `json:"username"`
-	ProxyType         string    `json:"proxy_type"`
-	ProxyHost         string    `json:"proxy_host"`
-	ProxyPort         int       `json:"proxy_port"`
-	ProxyUsername     string    `json:"proxy_username"`
-	ProxyCredentialID int       `json:"proxy_credential_id"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID                    int       `json:"id"`
+	Name                  string    `json:"name"`
+	Host                  string    `json:"host"`
+	Port                  int       `json:"port"`
+	Username              string    `json:"username"`
+	ProxyType             string    `json:"proxy_type"`
+	ProxyHost             string    `json:"proxy_host"`
+	ProxyPort             int       `json:"proxy_port"`
+	ProxyUsername         string    `json:"proxy_username"`
+	ProxyCredentialID     int       `json:"proxy_credential_id"`
+	JumpProxyType         string    `json:"jump_proxy_type"`
+	JumpProxyHost         string    `json:"jump_proxy_host"`
+	JumpProxyPort         int       `json:"jump_proxy_port"`
+	JumpProxyCredentialID int       `json:"jump_proxy_credential_id"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 func (h *NodeHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +101,7 @@ func (h *NodeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := validateProxyFields(req.ProxyType, req.ProxyHost); err != nil {
+	if err := validateProxyFields(req.ProxyType, req.ProxyHost, req.ProxyPort, req.ProxyUsername, req.ProxyCredentialID); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -134,10 +146,12 @@ func (h *NodeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Insert into nodes table with credential_id and proxy fields
 	result, err := h.db.Exec(`
 		INSERT INTO nodes (user_id, name, host, port, username, credential_id,
-		                   proxy_type, proxy_host, proxy_port, proxy_username, proxy_credential_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                   proxy_type, proxy_host, proxy_port, proxy_username, proxy_credential_id,
+		                   jump_proxy_type, jump_proxy_host, jump_proxy_port, jump_proxy_credential_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		user.ID, req.Name, req.Host, req.Port, req.Username, credID,
 		req.ProxyType, req.ProxyHost, req.ProxyPort, req.ProxyUsername, req.ProxyCredentialID,
+		req.JumpProxyType, req.JumpProxyHost, req.JumpProxyPort, req.JumpProxyCredentialID,
 	)
 	if err != nil {
 		http.Error(w, "Failed to create node", http.StatusInternalServerError)
@@ -151,18 +165,22 @@ func (h *NodeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(NodeResponse{
-		ID:                int(id),
-		Name:              req.Name,
-		Host:              req.Host,
-		Port:              req.Port,
-		Username:          req.Username,
-		ProxyType:         req.ProxyType,
-		ProxyHost:         req.ProxyHost,
-		ProxyPort:         req.ProxyPort,
-		ProxyUsername:     req.ProxyUsername,
-		ProxyCredentialID: req.ProxyCredentialID,
-		CreatedAt:         time.Now(),
-		UpdatedAt:         time.Now(),
+		ID:                    int(id),
+		Name:                  req.Name,
+		Host:                  req.Host,
+		Port:                  req.Port,
+		Username:              req.Username,
+		ProxyType:             req.ProxyType,
+		ProxyHost:             req.ProxyHost,
+		ProxyPort:             req.ProxyPort,
+		ProxyUsername:         req.ProxyUsername,
+		ProxyCredentialID:     req.ProxyCredentialID,
+		JumpProxyType:         req.JumpProxyType,
+		JumpProxyHost:         req.JumpProxyHost,
+		JumpProxyPort:         req.JumpProxyPort,
+		JumpProxyCredentialID: req.JumpProxyCredentialID,
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
 	})
 }
 
@@ -181,6 +199,8 @@ func (h *NodeHandler) List(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(`
 		SELECT id, name, host, port, username,
 		       proxy_type, proxy_host, proxy_port, proxy_username, proxy_credential_id,
+		       COALESCE(jump_proxy_type,''), COALESCE(jump_proxy_host,''),
+		       COALESCE(jump_proxy_port,0), COALESCE(jump_proxy_credential_id,0),
 		       created_at, updated_at
 		FROM nodes
 		WHERE user_id = ?
@@ -198,6 +218,7 @@ func (h *NodeHandler) List(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(
 			&node.ID, &node.Name, &node.Host, &node.Port, &node.Username,
 			&node.ProxyType, &node.ProxyHost, &node.ProxyPort, &node.ProxyUsername, &node.ProxyCredentialID,
+			&node.JumpProxyType, &node.JumpProxyHost, &node.JumpProxyPort, &node.JumpProxyCredentialID,
 			&node.CreatedAt, &node.UpdatedAt,
 		); err != nil {
 			continue
@@ -258,7 +279,7 @@ func (h *NodeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := validateProxyFields(req.ProxyType, req.ProxyHost); err != nil {
+	if err := validateProxyFields(req.ProxyType, req.ProxyHost, req.ProxyPort, req.ProxyUsername, req.ProxyCredentialID); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -303,10 +324,12 @@ func (h *NodeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		UPDATE nodes
 		SET name = ?, host = ?, port = ?, username = ?,
 		    proxy_type = ?, proxy_host = ?, proxy_port = ?, proxy_username = ?, proxy_credential_id = ?,
+		    jump_proxy_type = ?, jump_proxy_host = ?, jump_proxy_port = ?, jump_proxy_credential_id = ?,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
 		req.Name, req.Host, req.Port, req.Username,
 		req.ProxyType, req.ProxyHost, req.ProxyPort, req.ProxyUsername, req.ProxyCredentialID,
+		req.JumpProxyType, req.JumpProxyHost, req.JumpProxyPort, req.JumpProxyCredentialID,
 		nodeID,
 	)
 	if err != nil {
@@ -350,12 +373,26 @@ func (h *NodeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func validateProxyFields(proxyType, proxyHost string) error {
+func validateProxyFields(proxyType, proxyHost string, proxyPort int, proxyUsername string, proxyCredentialID int) error {
 	switch proxyType {
-	case "", "socks5", "http", "https":
-		// valid proxy type values
+	case "", "socks5", "http", "https", "jump":
+		// valid
 	default:
-		return fmt.Errorf("proxy_type must be one of: '', 'socks5', 'http', 'https'")
+		return fmt.Errorf("proxy_type must be one of: '', 'socks5', 'http', 'https', 'jump'")
+	}
+	if proxyType == "jump" {
+		if proxyHost == "" {
+			return fmt.Errorf("jump host address is required")
+		}
+		if proxyPort <= 0 {
+			return fmt.Errorf("jump host port is required")
+		}
+		if proxyUsername == "" {
+			return fmt.Errorf("jump host username is required")
+		}
+		if proxyCredentialID <= 0 {
+			return fmt.Errorf("jump host credential is required")
+		}
 	}
 	if (proxyType == "socks5" || proxyType == "http" || proxyType == "https") && proxyHost == "" {
 		return fmt.Errorf("proxy_host is required when proxy_type is '%s'", proxyType)

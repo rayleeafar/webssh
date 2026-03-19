@@ -98,6 +98,11 @@ func main() {
 	}))))
 
 	mux.Handle("/api/nodes/", authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// GET /api/nodes/{id}/sysinfo/cached — read-only, no CSRF required
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/sysinfo/cached") {
+			sysInfoHandler.GetCached(w, r)
+			return
+		}
 		// GET /api/nodes/{id}/sysinfo does not need CSRF (read-only)
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/sysinfo") {
 			sysInfoHandler.Get(w, r)
