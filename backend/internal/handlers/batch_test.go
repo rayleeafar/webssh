@@ -4,8 +4,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"net/http"
@@ -53,12 +55,18 @@ func TestBatchExec_RejectsEmptyCommand(t *testing.T) {
 // building JumpSSHConfig.
 //
 // The test wires up a fake SSH server that only accepts password
-// "jump-secret-pass".  The target node and its jump host are given separate
-// credentials with different passwords.  If the old bug were present the
-// handler would forward the target's password to the jump server — causing an
-// authentication error.  With the fix in place the jump handshake succeeds and
-// the only error is about being unable to reach the (deliberately
-// unreachable) target.
+// "jump-secret-pass".  The TARGET credential uses auth_type='private_key'
+// (a real ECDSA private-key PEM), while the JUMP credential uses
+// auth_type='password' with "jump-secret-pass".
+//
+// With the OLD bug (nc.authType used for jump): BuildAuthMethod("private_key",
+// "jump-secret-pass") fails to parse the password as a PEM key → nil auth →
+// jump SSH handshake fails with an authentication error.
+//
+// With the FIX (nc.proxyAuthType='password' used for jump):
+// BuildAuthMethod("password", "jump-secret-pass") succeeds → jump handshake
+// passes → the only error is a target-connection failure (port 1 is
+// unreachable).
 func TestBatchExec_JumpProxyAuthTypeIsolation(t *testing.T) {
 	// Encryption key: 32 ASCII bytes, distinct from the all-zero testEncKeyB64.
 	encKey := []byte("0123456789abcdef0123456789abcdef")
@@ -76,14 +84,27 @@ func TestBatchExec_JumpProxyAuthTypeIsolation(t *testing.T) {
 
 	aliceID := createTestUser(t, db, "alice", "pass")
 
-	// Target credential — password that the jump server must NOT accept.
-	encTargetPass, err := crypto.Encrypt("target-pass", encKey)
+	// Target credential — uses auth_type='private_key' with a real ECDSA key
+	// PEM.  This is structurally incompatible with the jump server's password
+	// authentication, so if the handler mistakenly passes nc.authType
+	// ('private_key') to BuildAuthMethod for the jump hop, it will try to
+	// parse the PEM as a password, fail, and return an authentication error.
+	targetPrivKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate target private key: %v", err)
+	}
+	targetPrivKeyBytes, err := x509.MarshalECPrivateKey(targetPrivKey)
+	if err != nil {
+		t.Fatalf("marshal target private key: %v", err)
+	}
+	targetPrivKeyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: targetPrivKeyBytes}))
+	encTargetKey, err := crypto.Encrypt(targetPrivKeyPEM, encKey)
 	if err != nil {
 		t.Fatalf("encrypt target cred: %v", err)
 	}
 	res, err := db.Exec(
-		"INSERT INTO credentials (user_id, auth_type, encrypted_value) VALUES (?, 'password', ?)",
-		aliceID, encTargetPass,
+		"INSERT INTO credentials (user_id, auth_type, encrypted_value) VALUES (?, 'private_key', ?)",
+		aliceID, encTargetKey,
 	)
 	if err != nil {
 		t.Fatalf("insert target credential: %v", err)
@@ -192,7 +213,7 @@ func startFakeSSHServer(t *testing.T, acceptedPassword string) (host string, por
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("listen: %v", err)
+		t.Skipf("cannot bind loopback listener (restricted environment): %v", err)
 	}
 	t.Cleanup(func() { ln.Close() })
 
