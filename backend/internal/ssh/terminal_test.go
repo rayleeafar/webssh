@@ -2,6 +2,9 @@ package ssh
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
 	"fmt"
@@ -522,6 +525,162 @@ func TestDialTarget_JumpUnreachable(t *testing.T) {
 	if !contains(err.Error(), "dial jump host") && !contains(err.Error(), "connection refused") &&
 		!contains(err.Error(), "connect") {
 		t.Errorf("expected a connection error, got: %v", err)
+	}
+}
+
+// TestDialTarget_JumpSuccess verifies that dialTarget with ProxyType="jump"
+// succeeds when both the jump host and target are real (fake) SSH servers.
+func TestDialTarget_JumpSuccess(t *testing.T) {
+	// Generate an ephemeral host key for both fake SSH servers.
+	hostKey := generateTestSigner(t)
+	jumpHostKey := generateTestSigner(t)
+
+	// Start a fake target SSH server.
+	targetLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("target listen: %v", err)
+	}
+	defer targetLn.Close()
+	go serveFakeSSH(targetLn, hostKey, "targetpass")
+
+	// Start a fake jump SSH server.
+	jumpLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("jump listen: %v", err)
+	}
+	defer jumpLn.Close()
+	go serveFakeSSH(jumpLn, jumpHostKey, "jumppass")
+
+	jumpHost, jumpPortStr, _ := net.SplitHostPort(jumpLn.Addr().String())
+	jumpPort, _ := strconv.Atoi(jumpPortStr)
+	targetHost, targetPortStr, _ := net.SplitHostPort(targetLn.Addr().String())
+	targetPort, _ := strconv.Atoi(targetPortStr)
+
+	cfg := NodeDialConfig{
+		TargetHost:    targetHost,
+		TargetPort:    targetPort,
+		ProxyType:     "jump",
+		ProxyHost:     jumpHost,
+		ProxyPort:     jumpPort,
+		ProxyUsername: "jumpuser",
+		JumpSSHConfig: &gossh.ClientConfig{
+			User:            "jumpuser",
+			Auth:            []gossh.AuthMethod{gossh.Password("jumppass")},
+			HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec
+		},
+	}
+
+	conn, err := dialTarget(cfg)
+	if err != nil {
+		t.Fatalf("expected successful jump dial, got error: %v", err)
+	}
+	conn.Close()
+}
+
+// TestDialTarget_JumpWrongCredentials verifies that dialTarget with ProxyType="jump"
+// and wrong jump credentials returns an authentication failure error.
+func TestDialTarget_JumpWrongCredentials(t *testing.T) {
+	// Generate an ephemeral host key for the fake jump SSH server.
+	jumpHostKey := generateTestSigner(t)
+
+	// Start a fake jump SSH server that only accepts "correctpass".
+	jumpLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("jump listen: %v", err)
+	}
+	defer jumpLn.Close()
+	go serveFakeSSH(jumpLn, jumpHostKey, "correctpass")
+
+	jumpHost, jumpPortStr, _ := net.SplitHostPort(jumpLn.Addr().String())
+	jumpPort, _ := strconv.Atoi(jumpPortStr)
+
+	cfg := NodeDialConfig{
+		TargetHost:    "127.0.0.1",
+		TargetPort:    22,
+		ProxyType:     "jump",
+		ProxyHost:     jumpHost,
+		ProxyPort:     jumpPort,
+		ProxyUsername: "jumpuser",
+		JumpSSHConfig: &gossh.ClientConfig{
+			User:            "jumpuser",
+			Auth:            []gossh.AuthMethod{gossh.Password("wrongpass")},
+			HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec
+			Timeout:         5 * time.Second,
+		},
+	}
+
+	conn, err := dialTarget(cfg)
+	if err == nil {
+		conn.Close()
+		t.Fatal("expected auth failure with wrong jump credentials, got nil error")
+	}
+	errStr := err.Error()
+	if !contains(errStr, "handshake") && !contains(errStr, "auth") &&
+		!contains(errStr, "unable to authenticate") && !contains(errStr, "jump host") {
+		t.Errorf("expected auth-related error, got: %v", err)
+	}
+}
+
+// generateTestSigner creates a new ECDSA P-256 private key and wraps it as a
+// gossh.Signer, for use as a test SSH server host key.
+func generateTestSigner(t *testing.T) gossh.Signer {
+	t.Helper()
+	priv, err := ecdsaP256Key()
+	if err != nil {
+		t.Fatalf("generate ecdsa key: %v", err)
+	}
+	signer, err := gossh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("create signer: %v", err)
+	}
+	return signer
+}
+
+// ecdsaP256Key generates a new ECDSA P-256 private key using crypto/rand.
+func ecdsaP256Key() (*ecdsa.PrivateKey, error) {
+	return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+}
+
+// serveFakeSSH runs a minimal SSH server on ln that accepts password auth
+// with the given acceptedPassword. It handles channel open requests by
+// immediately sending EOF so that callers can verify connectivity.
+func serveFakeSSH(ln net.Listener, hostKey gossh.Signer, acceptedPassword string) {
+	cfg := &gossh.ServerConfig{
+		PasswordCallback: func(c gossh.ConnMetadata, pass []byte) (*gossh.Permissions, error) {
+			if string(pass) == acceptedPassword {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("bad password")
+		},
+	}
+	cfg.AddHostKey(hostKey)
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		go handleFakeSSHConn(conn, cfg)
+	}
+}
+
+// handleFakeSSHConn performs the SSH handshake and drains incoming channel
+// requests, responding with success to allow jump-host tunnelling tests.
+func handleFakeSSHConn(conn net.Conn, cfg *gossh.ServerConfig) {
+	sshConn, chans, reqs, err := gossh.NewServerConn(conn, cfg)
+	if err != nil {
+		conn.Close()
+		return
+	}
+	defer sshConn.Close()
+	go gossh.DiscardRequests(reqs)
+	for newChan := range chans {
+		ch, chanReqs, err := newChan.Accept()
+		if err != nil {
+			continue
+		}
+		go gossh.DiscardRequests(chanReqs)
+		ch.Close()
 	}
 }
 

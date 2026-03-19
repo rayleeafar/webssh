@@ -9,11 +9,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/webssh/manager/internal/middleware"
-	sshutil "github.com/webssh/manager/internal/ssh"
-	"github.com/webssh/manager/pkg/crypto"
 	gossh "golang.org/x/crypto/ssh"
 )
 
@@ -105,53 +102,37 @@ func collectSysInfo(client *gossh.Client) (*SysInfoResponse, error) {
 	return info, nil
 }
 
-// collectAndStoreSysInfo SSHes directly to the node, collects system info, and
-// persists it to the node_sysinfo table. Intended to be called asynchronously
-// after node creation. Errors are logged and silently ignored.
-func collectAndStoreSysInfo(db *sql.DB, nodeID int, host string, port int, username, authType, encryptedCreds string, encKey []byte) {
-	creds, err := crypto.Decrypt(encryptedCreds, encKey)
+// collectAndStoreSysInfo connects to the node described by routing, collects
+// system info, and persists it to the node_sysinfo table. Intended to be
+// called asynchronously after node creation. Errors are logged and silently
+// ignored.
+func collectAndStoreSysInfo(db *sql.DB, nodeID int, routing *nodeSSHRouting) {
+	client, err := dialNodeSSH(routing)
 	if err != nil {
-		log.Printf("collectAndStoreSysInfo: decrypt creds for node %d: %v", nodeID, err)
-		return
-	}
-
-	authMethods, err := sshutil.BuildAuthMethod(authType, creds)
-	if err != nil {
-		log.Printf("collectAndStoreSysInfo: build auth method for node %d: %v", nodeID, err)
-		return
-	}
-
-	client, err := gossh.Dial("tcp", fmt.Sprintf("%s:%d", host, port), &gossh.ClientConfig{
-		User:            username,
-		Auth:            authMethods,
-		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec
-	})
-	if err != nil {
-		log.Printf("collectAndStoreSysInfo: SSH dial for node %d: %v", nodeID, err)
+		log.Printf("sysinfo collect node %d: dial: %v", nodeID, err)
 		return
 	}
 	defer client.Close()
 
 	info, err := collectSysInfo(client)
 	if err != nil {
-		log.Printf("collectAndStoreSysInfo: collect for node %d: %v", nodeID, err)
+		log.Printf("sysinfo collect node %d: collect: %v", nodeID, err)
 		return
 	}
 
-	_, err = db.Exec(`
+	if _, err := db.Exec(`
 		INSERT OR REPLACE INTO node_sysinfo
 			(node_id, hostname, os, kernel, uptime, cpu_model, cpu_cores, load_avg,
 			 mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr, collected_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
 		nodeID,
 		info.Hostname, info.OS, info.Kernel, info.Uptime,
 		info.CPUModel, info.CPUCores, info.LoadAvg,
 		info.MemTotal, info.MemUsed,
 		info.DiskTotal, info.DiskUsed, info.DiskPct,
-		info.IPAddr, time.Now().UTC(),
-	)
-	if err != nil {
-		log.Printf("collectAndStoreSysInfo: persist sysinfo for node %d: %v", nodeID, err)
+		info.IPAddr,
+	); err != nil {
+		log.Printf("sysinfo collect node %d: persist: %v", nodeID, err)
 	}
 }
 
@@ -176,26 +157,6 @@ func (h *SysInfoHandler) Get(w http.ResponseWriter, r *http.Request) {
 	nodeID, err := strconv.Atoi(parts[2])
 	if err != nil {
 		http.Error(w, "Invalid node ID", http.StatusBadRequest)
-		return
-	}
-
-	var host, username, encryptedCreds, authType string
-	var port, ownerID int
-	err = h.db.QueryRow(`
-		SELECT n.host, n.port, n.username, c.auth_type, c.encrypted_value, n.user_id
-		FROM nodes n
-		JOIN credentials c ON n.credential_id = c.id
-		WHERE n.id = ?`, nodeID).Scan(&host, &port, &username, &authType, &encryptedCreds, &ownerID)
-	if err == sql.ErrNoRows {
-		http.Error(w, "Node not found", http.StatusNotFound)
-		return
-	}
-	if err != nil {
-		http.Error(w, "Database error", http.StatusInternalServerError)
-		return
-	}
-	if ownerID != user.ID {
-		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -230,35 +191,23 @@ func (h *SysInfoHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	creds, err := crypto.Decrypt(encryptedCreds, key)
+	routing, err := loadNodeSSHRouting(h.db, nodeID, user.ID, key)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Node not found", http.StatusNotFound)
+			return
+		}
 		if cached != nil {
 			cached.Stale = true
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(cached) //nolint:errcheck
 			return
 		}
-		http.Error(w, "Decrypt error", http.StatusInternalServerError)
+		http.Error(w, "Failed to load node configuration", http.StatusInternalServerError)
 		return
 	}
 
-	authMethods, err := sshutil.BuildAuthMethod(authType, creds)
-	if err != nil {
-		if cached != nil {
-			cached.Stale = true
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(cached) //nolint:errcheck
-			return
-		}
-		http.Error(w, "Auth method error", http.StatusInternalServerError)
-		return
-	}
-
-	client, err := gossh.Dial("tcp", fmt.Sprintf("%s:%d", host, port), &gossh.ClientConfig{
-		User:            username,
-		Auth:            authMethods,
-		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec
-	})
+	client, err := dialNodeSSH(routing)
 	if err != nil {
 		// SSH failed — return stale cache if available, otherwise error.
 		if cached != nil {
@@ -281,7 +230,7 @@ func (h *SysInfoHandler) Get(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(cached) //nolint:errcheck
 			return
 		}
-		minimal := SysInfoResponse{Hostname: host, OS: "unknown", IPAddr: host}
+		minimal := SysInfoResponse{Hostname: routing.DialConfig.TargetHost, OS: "unknown", IPAddr: routing.DialConfig.TargetHost}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(minimal) //nolint:errcheck
 		return
@@ -292,13 +241,13 @@ func (h *SysInfoHandler) Get(w http.ResponseWriter, r *http.Request) {
 		INSERT OR REPLACE INTO node_sysinfo
 			(node_id, hostname, os, kernel, uptime, cpu_model, cpu_cores, load_avg,
 			 mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr, collected_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
 		nodeID,
 		info.Hostname, info.OS, info.Kernel, info.Uptime,
 		info.CPUModel, info.CPUCores, info.LoadAvg,
 		info.MemTotal, info.MemUsed,
 		info.DiskTotal, info.DiskUsed, info.DiskPct,
-		info.IPAddr, time.Now().UTC(),
+		info.IPAddr,
 	)
 	if dbErr != nil {
 		log.Printf("sysinfo Get: persist refreshed sysinfo for node %d: %v", nodeID, dbErr)

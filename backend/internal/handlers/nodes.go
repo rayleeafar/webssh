@@ -160,7 +160,11 @@ func (h *NodeHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	id, _ := result.LastInsertId()
 
-	go collectAndStoreSysInfo(h.db, int(id), req.Host, req.Port, req.Username, authType, encryptedCreds, key)
+	// Build routing synchronously so the goroutine does not need DB access.
+	if routing, rerr := loadNodeSSHRouting(h.db, int(id), user.ID, key); rerr == nil {
+		nodeID := int(id)
+		go collectAndStoreSysInfo(h.db, nodeID, routing)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

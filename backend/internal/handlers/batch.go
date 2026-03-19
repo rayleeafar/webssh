@@ -59,11 +59,13 @@ type nodeCredentials struct {
 	proxyUsername         string
 	proxyCredentialID     int
 	proxyEncCreds         string // loaded separately
+	proxyAuthType         string // auth_type of the proxy/jump credential
 	jumpProxyType         string
 	jumpProxyHost         string
 	jumpProxyPort         int
 	jumpProxyCredentialID int
 	jumpProxyEncCreds     string
+	jumpProxyAuthType     string // auth_type of the jump host's upstream proxy credential
 }
 
 // Exec handles POST /api/batch/exec — runs a command on all requested nodes
@@ -145,12 +147,14 @@ func (h *BatchHandler) Exec(w http.ResponseWriter, r *http.Request) {
 			h.db.QueryRow("SELECT auth_type, encrypted_value FROM credentials WHERE id = ? AND user_id = ?",
 				nc.proxyCredentialID, user.ID).Scan(&pt, &pe)
 			nodeCreds[i].proxyEncCreds = pe
+			nodeCreds[i].proxyAuthType = pt
 		}
 		if nc.jumpProxyCredentialID > 0 {
 			var pe, pt string
 			h.db.QueryRow("SELECT auth_type, encrypted_value FROM credentials WHERE id = ? AND user_id = ?",
 				nc.jumpProxyCredentialID, user.ID).Scan(&pt, &pe)
 			nodeCreds[i].jumpProxyEncCreds = pe
+			nodeCreds[i].jumpProxyAuthType = pt
 		}
 	}
 
@@ -216,7 +220,7 @@ func runCommandOnNode(ctx context.Context, nc nodeCredentials, cmd string, encKe
 	var jumpSSHConfig *gossh.ClientConfig
 	if nc.proxyType == "jump" && nc.proxyEncCreds != "" {
 		jcreds, _ := crypto.Decrypt(nc.proxyEncCreds, encKey)
-		jauth, _ := sshutil.BuildAuthMethod(nc.authType, jcreds)
+		jauth, _ := sshutil.BuildAuthMethod(nc.proxyAuthType, jcreds)
 		jumpSSHConfig = &gossh.ClientConfig{
 			User:            nc.proxyUsername,
 			Auth:            jauth,
