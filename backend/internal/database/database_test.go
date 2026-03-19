@@ -143,3 +143,51 @@ func TestIdempotentMigration(t *testing.T) {
 		t.Fatalf("second migrate() call failed: %v", err)
 	}
 }
+
+// TestNodesProxyColumns verifies that the nodes table has proxy_type and related columns after initialization.
+func TestNodesProxyColumns(t *testing.T) {
+	db, err := Initialize(":memory:")
+	if err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+	defer db.Close()
+
+	proxyColumns := []string{"proxy_type", "proxy_host", "proxy_port", "proxy_username", "proxy_credential_id"}
+	for _, col := range proxyColumns {
+		var count int
+		db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('nodes') WHERE name=?", col).Scan(&count)
+		if count != 1 {
+			t.Errorf("expected column %s to exist in nodes table", col)
+		}
+	}
+}
+
+// TestNodeSysInfoTableExists verifies that the node_sysinfo table is created after initialization.
+func TestNodeSysInfoTableExists(t *testing.T) {
+	db, err := Initialize(":memory:")
+	if err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+	defer db.Close()
+
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='node_sysinfo'").Scan(&count)
+	if count != 1 {
+		t.Error("expected node_sysinfo table to exist")
+	}
+}
+
+// TestInitializeTwiceIdempotent verifies that calling Initialize twice on the same DB path does not fail.
+func TestInitializeTwiceIdempotent(t *testing.T) {
+	db1, err := Initialize(":memory:")
+	if err != nil {
+		t.Fatalf("first Initialize failed: %v", err)
+	}
+	defer db1.Close()
+
+	// Run the migration functions again directly to simulate a second startup against
+	// an already-migrated schema.
+	if err := migrate(db1); err != nil {
+		t.Fatalf("second migrate() on initialized DB failed: %v", err)
+	}
+}

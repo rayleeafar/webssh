@@ -20,8 +20,33 @@ type Node struct {
 	Port                 int       `json:"port"`
 	Username             string    `json:"username"`
 	EncryptedCredentials string    `json:"-"`
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
+	CredentialID         int       `json:"credential_id"`
+	// Proxy / jump-server configuration
+	ProxyType         string `json:"proxy_type"`
+	ProxyHost         string `json:"proxy_host"`
+	ProxyPort         int    `json:"proxy_port"`
+	ProxyUsername     string `json:"proxy_username"`
+	ProxyCredentialID int    `json:"proxy_credential_id"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+type NodeSysInfo struct {
+	NodeID      int       `json:"node_id"`
+	Hostname    string    `json:"hostname"`
+	OS          string    `json:"os"`
+	Kernel      string    `json:"kernel"`
+	Uptime      string    `json:"uptime"`
+	CPUModel    string    `json:"cpu_model"`
+	CPUCores    int       `json:"cpu_cores"`
+	LoadAvg     string    `json:"load_avg"`
+	MemTotal    int64     `json:"mem_total"`
+	MemUsed     int64     `json:"mem_used"`
+	DiskTotal   string    `json:"disk_total"`
+	DiskUsed    string    `json:"disk_used"`
+	DiskPct     string    `json:"disk_pct"`
+	IPAddr      string    `json:"ip_addr"`
+	CollectedAt time.Time `json:"collected_at"`
 }
 
 type Session struct {

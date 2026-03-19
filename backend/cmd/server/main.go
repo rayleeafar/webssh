@@ -67,6 +67,7 @@ func main() {
 	authHandler := handlers.NewAuthHandler(authService, cfg.EnableTLS)
 	nodeHandler := handlers.NewNodeHandler(db)
 	sysInfoHandler := handlers.NewSysInfoHandler(db)
+	batchHandler := handlers.NewBatchHandler(db)
 	terminalHandler := ssh.NewTerminalHandler(db, authService)
 	sftpHandler := sftp.NewSFTPHandler(db)
 
@@ -116,6 +117,8 @@ func main() {
 	})))
 
 	mux.Handle("/ws/terminal", authMiddleware(http.HandlerFunc(terminalHandler.HandleWebSocket)))
+
+	mux.Handle("/api/batch/exec", authMiddleware(csrfMiddleware(http.HandlerFunc(batchHandler.Exec))))
 
 	mux.Handle("/api/sftp/list", authMiddleware(http.HandlerFunc(sftpHandler.List)))
 	mux.Handle("/api/sftp/download", authMiddleware(http.HandlerFunc(sftpHandler.Download)))

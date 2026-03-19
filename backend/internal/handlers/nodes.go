@@ -24,31 +24,46 @@ func NewNodeHandler(db *sql.DB) *NodeHandler {
 }
 
 type CreateNodeRequest struct {
-	Name        string `json:"name"`
-	Host        string `json:"host"`
-	Port        int    `json:"port"`
-	Username    string `json:"username"`
-	Password    string `json:"password,omitempty"`
-	PrivateKey  string `json:"private_key,omitempty"`
+	Name              string `json:"name"`
+	Host              string `json:"host"`
+	Port              int    `json:"port"`
+	Username          string `json:"username"`
+	Password          string `json:"password,omitempty"`
+	PrivateKey        string `json:"private_key,omitempty"`
+	ProxyType         string `json:"proxy_type,omitempty"`
+	ProxyHost         string `json:"proxy_host,omitempty"`
+	ProxyPort         int    `json:"proxy_port,omitempty"`
+	ProxyUsername     string `json:"proxy_username,omitempty"`
+	ProxyCredentialID int    `json:"proxy_credential_id,omitempty"`
 }
 
 type UpdateNodeRequest struct {
-	Name        string `json:"name"`
-	Host        string `json:"host"`
-	Port        int    `json:"port"`
-	Username    string `json:"username"`
-	Password    string `json:"password,omitempty"`
-	PrivateKey  string `json:"private_key,omitempty"`
+	Name              string `json:"name"`
+	Host              string `json:"host"`
+	Port              int    `json:"port"`
+	Username          string `json:"username"`
+	Password          string `json:"password,omitempty"`
+	PrivateKey        string `json:"private_key,omitempty"`
+	ProxyType         string `json:"proxy_type,omitempty"`
+	ProxyHost         string `json:"proxy_host,omitempty"`
+	ProxyPort         int    `json:"proxy_port,omitempty"`
+	ProxyUsername     string `json:"proxy_username,omitempty"`
+	ProxyCredentialID int    `json:"proxy_credential_id,omitempty"`
 }
 
 type NodeResponse struct {
-	ID        int       `json:"id"`
-	Name      string    `json:"name"`
-	Host      string    `json:"host"`
-	Port      int       `json:"port"`
-	Username  string    `json:"username"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID                int       `json:"id"`
+	Name              string    `json:"name"`
+	Host              string    `json:"host"`
+	Port              int       `json:"port"`
+	Username          string    `json:"username"`
+	ProxyType         string    `json:"proxy_type"`
+	ProxyHost         string    `json:"proxy_host"`
+	ProxyPort         int       `json:"proxy_port"`
+	ProxyUsername     string    `json:"proxy_username"`
+	ProxyCredentialID int       `json:"proxy_credential_id"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 func (h *NodeHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +85,11 @@ func (h *NodeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := validateNodeRequest(req.Name, req.Host, req.Port, req.Username); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := validateProxyFields(req.ProxyType, req.ProxyHost); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -111,11 +131,13 @@ func (h *NodeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Insert into nodes table with credential_id
+	// Insert into nodes table with credential_id and proxy fields
 	result, err := h.db.Exec(`
-		INSERT INTO nodes (user_id, name, host, port, username, credential_id)
-		VALUES (?, ?, ?, ?, ?, ?)`,
+		INSERT INTO nodes (user_id, name, host, port, username, credential_id,
+		                   proxy_type, proxy_host, proxy_port, proxy_username, proxy_credential_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		user.ID, req.Name, req.Host, req.Port, req.Username, credID,
+		req.ProxyType, req.ProxyHost, req.ProxyPort, req.ProxyUsername, req.ProxyCredentialID,
 	)
 	if err != nil {
 		http.Error(w, "Failed to create node", http.StatusInternalServerError)
@@ -124,16 +146,23 @@ func (h *NodeHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	id, _ := result.LastInsertId()
 
+	go collectAndStoreSysInfo(h.db, int(id), req.Host, req.Port, req.Username, authType, encryptedCreds, key)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(NodeResponse{
-		ID:        int(id),
-		Name:      req.Name,
-		Host:      req.Host,
-		Port:      req.Port,
-		Username:  req.Username,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:                int(id),
+		Name:              req.Name,
+		Host:              req.Host,
+		Port:              req.Port,
+		Username:          req.Username,
+		ProxyType:         req.ProxyType,
+		ProxyHost:         req.ProxyHost,
+		ProxyPort:         req.ProxyPort,
+		ProxyUsername:     req.ProxyUsername,
+		ProxyCredentialID: req.ProxyCredentialID,
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
 	})
 }
 
@@ -150,7 +179,9 @@ func (h *NodeHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.db.Query(`
-		SELECT id, name, host, port, username, created_at, updated_at
+		SELECT id, name, host, port, username,
+		       proxy_type, proxy_host, proxy_port, proxy_username, proxy_credential_id,
+		       created_at, updated_at
 		FROM nodes
 		WHERE user_id = ?
 		ORDER BY created_at DESC
@@ -164,7 +195,11 @@ func (h *NodeHandler) List(w http.ResponseWriter, r *http.Request) {
 	var nodes []NodeResponse
 	for rows.Next() {
 		var node NodeResponse
-		if err := rows.Scan(&node.ID, &node.Name, &node.Host, &node.Port, &node.Username, &node.CreatedAt, &node.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&node.ID, &node.Name, &node.Host, &node.Port, &node.Username,
+			&node.ProxyType, &node.ProxyHost, &node.ProxyPort, &node.ProxyUsername, &node.ProxyCredentialID,
+			&node.CreatedAt, &node.UpdatedAt,
+		); err != nil {
 			continue
 		}
 		nodes = append(nodes, node)
@@ -223,6 +258,11 @@ func (h *NodeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := validateProxyFields(req.ProxyType, req.ProxyHost); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	// Update credentials if provided
 	if req.Password != "" || req.PrivateKey != "" {
 		credentials := req.Password
@@ -261,9 +301,13 @@ func (h *NodeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Update the nodes table
 	_, err = h.db.Exec(`
 		UPDATE nodes
-		SET name = ?, host = ?, port = ?, username = ?, updated_at = CURRENT_TIMESTAMP
+		SET name = ?, host = ?, port = ?, username = ?,
+		    proxy_type = ?, proxy_host = ?, proxy_port = ?, proxy_username = ?, proxy_credential_id = ?,
+		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
-		req.Name, req.Host, req.Port, req.Username, nodeID,
+		req.Name, req.Host, req.Port, req.Username,
+		req.ProxyType, req.ProxyHost, req.ProxyPort, req.ProxyUsername, req.ProxyCredentialID,
+		nodeID,
 	)
 	if err != nil {
 		http.Error(w, "Failed to update node", http.StatusInternalServerError)
@@ -304,6 +348,19 @@ func (h *NodeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func validateProxyFields(proxyType, proxyHost string) error {
+	switch proxyType {
+	case "", "socks5", "http", "https":
+		// valid proxy type values
+	default:
+		return fmt.Errorf("proxy_type must be one of: '', 'socks5', 'http', 'https'")
+	}
+	if (proxyType == "socks5" || proxyType == "http" || proxyType == "https") && proxyHost == "" {
+		return fmt.Errorf("proxy_host is required when proxy_type is '%s'", proxyType)
+	}
+	return nil
 }
 
 func validateNodeRequest(name, host string, port int, username string) error {

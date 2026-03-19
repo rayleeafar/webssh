@@ -75,6 +75,11 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("failed to migrate sessions: %w", err)
 	}
 
+	// 5. Node sysinfo cache table
+	if err := migrateNodeSysInfo(db); err != nil {
+		return fmt.Errorf("failed to migrate node_sysinfo: %w", err)
+	}
+
 	return nil
 }
 
@@ -98,6 +103,11 @@ func migrateNodes(db *sql.DB) error {
 				port INTEGER NOT NULL DEFAULT 22,
 				username TEXT NOT NULL,
 				credential_id INTEGER NOT NULL,
+				proxy_type TEXT NOT NULL DEFAULT '',
+				proxy_host TEXT NOT NULL DEFAULT '',
+				proxy_port INTEGER NOT NULL DEFAULT 0,
+				proxy_username TEXT NOT NULL DEFAULT '',
+				proxy_credential_id INTEGER NOT NULL DEFAULT 0,
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -124,12 +134,27 @@ func migrateNodes(db *sql.DB) error {
 	}
 
 	if legacyCount == 0 {
-		// Already current schema — just ensure indexes exist
+		// Already current schema — ensure indexes exist
 		if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_nodes_user_id ON nodes(user_id)`); err != nil {
 			return err
 		}
 		if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_nodes_credential_id ON nodes(credential_id)`); err != nil {
 			return err
+		}
+		// Add any missing proxy columns to existing installations
+		proxyColumns := []struct{ name, def string }{
+			{"proxy_type", "TEXT NOT NULL DEFAULT ''"},
+			{"proxy_host", "TEXT NOT NULL DEFAULT ''"},
+			{"proxy_port", "INTEGER NOT NULL DEFAULT 0"},
+			{"proxy_username", "TEXT NOT NULL DEFAULT ''"},
+			{"proxy_credential_id", "INTEGER NOT NULL DEFAULT 0"},
+		}
+		for _, col := range proxyColumns {
+			var count int
+			db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('nodes') WHERE name=?", col.name).Scan(&count)
+			if count == 0 {
+				db.Exec("ALTER TABLE nodes ADD COLUMN " + col.name + " " + col.def)
+			}
 		}
 		return nil
 	}
@@ -219,6 +244,11 @@ func migrateNodes(db *sql.DB) error {
 			port INTEGER NOT NULL DEFAULT 22,
 			username TEXT NOT NULL,
 			credential_id INTEGER NOT NULL,
+			proxy_type TEXT NOT NULL DEFAULT '',
+			proxy_host TEXT NOT NULL DEFAULT '',
+			proxy_port INTEGER NOT NULL DEFAULT 0,
+			proxy_username TEXT NOT NULL DEFAULT '',
+			proxy_credential_id INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -259,6 +289,30 @@ func migrateNodes(db *sql.DB) error {
 	}
 
 	return nil
+}
+
+func migrateNodeSysInfo(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS node_sysinfo (
+			node_id INTEGER PRIMARY KEY,
+			hostname TEXT NOT NULL DEFAULT '',
+			os TEXT NOT NULL DEFAULT '',
+			kernel TEXT NOT NULL DEFAULT '',
+			uptime TEXT NOT NULL DEFAULT '',
+			cpu_model TEXT NOT NULL DEFAULT '',
+			cpu_cores INTEGER NOT NULL DEFAULT 0,
+			load_avg TEXT NOT NULL DEFAULT '',
+			mem_total INTEGER NOT NULL DEFAULT 0,
+			mem_used INTEGER NOT NULL DEFAULT 0,
+			disk_total TEXT NOT NULL DEFAULT '',
+			disk_used TEXT NOT NULL DEFAULT '',
+			disk_pct TEXT NOT NULL DEFAULT '',
+			ip_addr TEXT NOT NULL DEFAULT '',
+			collected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+		)
+	`)
+	return err
 }
 
 func migrateSessions(db *sql.DB) error {

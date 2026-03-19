@@ -5,14 +5,16 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/webssh/manager/internal/middleware"
 	sshutil "github.com/webssh/manager/internal/ssh"
 	"github.com/webssh/manager/pkg/crypto"
-	"golang.org/x/crypto/ssh"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 type SysInfoHandler struct {
@@ -37,6 +39,120 @@ type SysInfoResponse struct {
 	DiskUsed  string `json:"disk_used"`
 	DiskPct   string `json:"disk_pct"`
 	IPAddr    string `json:"ip_addr"`
+	Stale     bool   `json:"stale,omitempty"`
+}
+
+// sysInfoShellCmd is the shell command used to collect system information remotely.
+const sysInfoShellCmd = `echo "HOSTNAME=$(hostname)" && ` +
+	`echo "OS=$(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '"' || uname -s)" && ` +
+	`echo "KERNEL=$(uname -r)" && ` +
+	`echo "UPTIME=$(uptime -p 2>/dev/null || uptime)" && ` +
+	`echo "CPU=$(cat /proc/cpuinfo 2>/dev/null | grep 'model name' | head -1 | cut -d: -f2 | xargs || sysctl -n machdep.cpu.brand_string 2>/dev/null || echo unknown)" && ` +
+	`echo "CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 0)" && ` +
+	`echo "LOAD=$(cat /proc/loadavg 2>/dev/null | awk '{print $1" "$2" "$3}' || sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | xargs || echo 0)" && ` +
+	`free -m 2>/dev/null | awk '/^Mem:/{print "MEM_TOTAL="$2" MEM_USED="$3}' || echo "MEM_TOTAL=0 MEM_USED=0" && ` +
+	`df -h / 2>/dev/null | awk 'NR==2{print "DISK_TOTAL="$2" DISK_USED="$3" DISK_PCT="$5}' || echo "DISK_TOTAL=0 DISK_USED=0 DISK_PCT=0" && ` +
+	`echo "IP=$(hostname -I 2>/dev/null | awk '{print $1}' || ipconfig getifaddr en0 2>/dev/null || echo unknown)"`
+
+// collectSysInfo connects via an existing SSH client and collects system info.
+// Returns the data or an error; does not write to DB.
+func collectSysInfo(client *gossh.Client) (*SysInfoResponse, error) {
+	sess, err := client.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("open SSH session: %w", err)
+	}
+	defer sess.Close()
+
+	out, err := sess.Output(sysInfoShellCmd)
+	if err != nil {
+		return nil, fmt.Errorf("run sysinfo command: %w", err)
+	}
+
+	info := &SysInfoResponse{}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Handle lines with multiple KEY=VALUE pairs (e.g. "MEM_TOTAL=X MEM_USED=Y")
+		if strings.Contains(line, " ") && strings.Contains(line, "=") {
+			tokens := strings.Fields(line)
+			allKV := true
+			for _, t := range tokens {
+				if !strings.Contains(t, "=") {
+					allKV = false
+					break
+				}
+			}
+			if allKV {
+				for _, t := range tokens {
+					kv := strings.SplitN(t, "=", 2)
+					if len(kv) == 2 {
+						parseSysInfoKV(info, kv[0], kv[1])
+					}
+				}
+				continue
+			}
+		}
+
+		kv := strings.SplitN(line, "=", 2)
+		if len(kv) == 2 {
+			parseSysInfoKV(info, strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1]))
+		}
+	}
+
+	return info, nil
+}
+
+// collectAndStoreSysInfo SSHes directly to the node, collects system info, and
+// persists it to the node_sysinfo table. Intended to be called asynchronously
+// after node creation. Errors are logged and silently ignored.
+func collectAndStoreSysInfo(db *sql.DB, nodeID int, host string, port int, username, authType, encryptedCreds string, encKey []byte) {
+	creds, err := crypto.Decrypt(encryptedCreds, encKey)
+	if err != nil {
+		log.Printf("collectAndStoreSysInfo: decrypt creds for node %d: %v", nodeID, err)
+		return
+	}
+
+	authMethods, err := sshutil.BuildAuthMethod(authType, creds)
+	if err != nil {
+		log.Printf("collectAndStoreSysInfo: build auth method for node %d: %v", nodeID, err)
+		return
+	}
+
+	client, err := gossh.Dial("tcp", fmt.Sprintf("%s:%d", host, port), &gossh.ClientConfig{
+		User:            username,
+		Auth:            authMethods,
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec
+	})
+	if err != nil {
+		log.Printf("collectAndStoreSysInfo: SSH dial for node %d: %v", nodeID, err)
+		return
+	}
+	defer client.Close()
+
+	info, err := collectSysInfo(client)
+	if err != nil {
+		log.Printf("collectAndStoreSysInfo: collect for node %d: %v", nodeID, err)
+		return
+	}
+
+	_, err = db.Exec(`
+		INSERT OR REPLACE INTO node_sysinfo
+			(node_id, hostname, os, kernel, uptime, cpu_model, cpu_cores, load_avg,
+			 mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr, collected_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		nodeID,
+		info.Hostname, info.OS, info.Kernel, info.Uptime,
+		info.CPUModel, info.CPUCores, info.LoadAvg,
+		info.MemTotal, info.MemUsed,
+		info.DiskTotal, info.DiskUsed, info.DiskPct,
+		info.IPAddr, time.Now().UTC(),
+	)
+	if err != nil {
+		log.Printf("collectAndStoreSysInfo: persist sysinfo for node %d: %v", nodeID, err)
+	}
 }
 
 func (h *SysInfoHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -83,94 +199,109 @@ func (h *SysInfoHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Load cached data from node_sysinfo table.
+	var cached *SysInfoResponse
+	var cachedRow SysInfoResponse
+	scanErr := h.db.QueryRow(`
+		SELECT hostname, os, kernel, uptime, cpu_model, cpu_cores, load_avg,
+		       mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr
+		FROM node_sysinfo
+		WHERE node_id = ?`, nodeID).Scan(
+		&cachedRow.Hostname, &cachedRow.OS, &cachedRow.Kernel, &cachedRow.Uptime,
+		&cachedRow.CPUModel, &cachedRow.CPUCores, &cachedRow.LoadAvg,
+		&cachedRow.MemTotal, &cachedRow.MemUsed,
+		&cachedRow.DiskTotal, &cachedRow.DiskUsed, &cachedRow.DiskPct,
+		&cachedRow.IPAddr,
+	)
+	if scanErr == nil {
+		cached = &cachedRow
+	}
+
 	key, err := base64.StdEncoding.DecodeString(user.EncryptionKey)
 	if err != nil {
+		// Key error — fall back to cache if available
+		if cached != nil {
+			cached.Stale = true
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(cached) //nolint:errcheck
+			return
+		}
 		http.Error(w, "Key error", http.StatusInternalServerError)
 		return
 	}
 
 	creds, err := crypto.Decrypt(encryptedCreds, key)
 	if err != nil {
+		if cached != nil {
+			cached.Stale = true
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(cached) //nolint:errcheck
+			return
+		}
 		http.Error(w, "Decrypt error", http.StatusInternalServerError)
 		return
 	}
 
 	authMethods, err := sshutil.BuildAuthMethod(authType, creds)
 	if err != nil {
+		if cached != nil {
+			cached.Stale = true
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(cached) //nolint:errcheck
+			return
+		}
 		http.Error(w, "Auth method error", http.StatusInternalServerError)
 		return
 	}
 
-	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", host, port), &ssh.ClientConfig{
+	client, err := gossh.Dial("tcp", fmt.Sprintf("%s:%d", host, port), &gossh.ClientConfig{
 		User:            username,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec
 	})
 	if err != nil {
+		// SSH failed — return stale cache if available, otherwise error.
+		if cached != nil {
+			cached.Stale = true
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(cached) //nolint:errcheck
+			return
+		}
 		http.Error(w, "SSH connection failed", http.StatusBadGateway)
 		return
 	}
 	defer client.Close()
 
-	sess, err := client.NewSession()
+	info, err := collectSysInfo(client)
 	if err != nil {
-		http.Error(w, "Session error", http.StatusBadGateway)
-		return
-	}
-	defer sess.Close()
-
-	cmd := `echo "HOSTNAME=$(hostname)" && ` +
-		`echo "OS=$(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '"' || uname -s)" && ` +
-		`echo "KERNEL=$(uname -r)" && ` +
-		`echo "UPTIME=$(uptime -p 2>/dev/null || uptime)" && ` +
-		`echo "CPU=$(cat /proc/cpuinfo 2>/dev/null | grep 'model name' | head -1 | cut -d: -f2 | xargs || sysctl -n machdep.cpu.brand_string 2>/dev/null || echo unknown)" && ` +
-		`echo "CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 0)" && ` +
-		`echo "LOAD=$(cat /proc/loadavg 2>/dev/null | awk '{print $1\" \"$2\" \"$3}' || sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | xargs || echo 0)" && ` +
-		`free -m 2>/dev/null | awk '/^Mem:/{print "MEM_TOTAL="$2" MEM_USED="$3}' || echo "MEM_TOTAL=0 MEM_USED=0" && ` +
-		`df -h / 2>/dev/null | awk 'NR==2{print "DISK_TOTAL="$2" DISK_USED="$3" DISK_PCT="$5}' || echo "DISK_TOTAL=0 DISK_USED=0 DISK_PCT=0" && ` +
-		`echo "IP=$(hostname -I 2>/dev/null | awk '{print $1}' || ipconfig getifaddr en0 2>/dev/null || echo unknown)"`
-
-	out, err := sess.Output(cmd)
-	if err != nil {
-		// Return minimal info on command failure
-		info := SysInfoResponse{Hostname: host, OS: "unknown", IPAddr: host}
+		// Command failure — return stale cache if available, otherwise minimal info.
+		if cached != nil {
+			cached.Stale = true
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(cached) //nolint:errcheck
+			return
+		}
+		minimal := SysInfoResponse{Hostname: host, OS: "unknown", IPAddr: host}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(info) //nolint:errcheck
+		json.NewEncoder(w).Encode(minimal) //nolint:errcheck
 		return
 	}
 
-	info := SysInfoResponse{}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		// Handle lines with multiple KEY=VALUE pairs (e.g. "MEM_TOTAL=X MEM_USED=Y")
-		if strings.Contains(line, " ") && strings.Contains(line, "=") {
-			tokens := strings.Fields(line)
-			allKV := true
-			for _, t := range tokens {
-				if !strings.Contains(t, "=") {
-					allKV = false
-					break
-				}
-			}
-			if allKV {
-				for _, t := range tokens {
-					kv := strings.SplitN(t, "=", 2)
-					if len(kv) == 2 {
-						parseSysInfoKV(&info, kv[0], kv[1])
-					}
-				}
-				continue
-			}
-		}
-
-		kv := strings.SplitN(line, "=", 2)
-		if len(kv) == 2 {
-			parseSysInfoKV(&info, strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1]))
-		}
+	// Persist refreshed data.
+	_, dbErr := h.db.Exec(`
+		INSERT OR REPLACE INTO node_sysinfo
+			(node_id, hostname, os, kernel, uptime, cpu_model, cpu_cores, load_avg,
+			 mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr, collected_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		nodeID,
+		info.Hostname, info.OS, info.Kernel, info.Uptime,
+		info.CPUModel, info.CPUCores, info.LoadAvg,
+		info.MemTotal, info.MemUsed,
+		info.DiskTotal, info.DiskUsed, info.DiskPct,
+		info.IPAddr, time.Now().UTC(),
+	)
+	if dbErr != nil {
+		log.Printf("sysinfo Get: persist refreshed sysinfo for node %d: %v", nodeID, dbErr)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
