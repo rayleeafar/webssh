@@ -12,6 +12,7 @@ interface Node {
   proxy_type?: string
   proxy_host?: string
   proxy_port?: number
+  proxy_username?: string
   proxy_credential_id?: number
   created_at: string
 }
@@ -35,6 +36,7 @@ export default function NodeModal({ node, onClose, onSave }: NodeModalProps) {
   const [proxyType, setProxyType] = useState<'' | 'socks5' | 'http' | 'https' | 'jump'>(node?.proxy_type as '' | 'socks5' | 'http' | 'https' | 'jump' || '')
   const [proxyHost, setProxyHost] = useState(node?.proxy_host || '')
   const [proxyPort, setProxyPort] = useState(node?.proxy_port || 1080)
+  const [proxyUsername, setProxyUsername] = useState(node?.proxy_username || '')
   const [proxyCredentialId, setProxyCredentialId] = useState(node?.proxy_credential_id || 0)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -47,6 +49,11 @@ export default function NodeModal({ node, onClose, onSave }: NodeModalProps) {
       setHost(node.host)
       setPort(node.port)
       setUsername(node.username)
+      setProxyType(node.proxy_type as '' | 'socks5' | 'http' | 'https' | 'jump' || '')
+      setProxyHost(node.proxy_host || '')
+      setProxyPort(node.proxy_port || 1080)
+      setProxyUsername(node.proxy_username || '')
+      setProxyCredentialId(node.proxy_credential_id || 0)
     }
   }, [node])
 
@@ -60,6 +67,23 @@ export default function NodeModal({ node, onClose, onSave }: NodeModalProps) {
       setLoading(false)
       return
     }
+    if (proxyType === 'jump') {
+      if (proxyPort <= 0) {
+        setError('Jump port is required')
+        setLoading(false)
+        return
+      }
+      if (proxyUsername === '') {
+        setError('Jump SSH username is required')
+        setLoading(false)
+        return
+      }
+      if (proxyCredentialId <= 0) {
+        setError('Jump SSH credential is required')
+        setLoading(false)
+        return
+      }
+    }
 
     const payload = {
       name,
@@ -71,6 +95,7 @@ export default function NodeModal({ node, onClose, onSave }: NodeModalProps) {
       proxy_type: proxyType,
       proxy_host: proxyType ? proxyHost : '',
       proxy_port: proxyType ? proxyPort : 0,
+      proxy_username: proxyUsername,
       proxy_credential_id: proxyCredentialId,
     }
 
@@ -369,7 +394,50 @@ export default function NodeModal({ node, onClose, onSave }: NodeModalProps) {
               </select>
             </div>
 
-            {proxyType !== '' && (
+            {proxyType === 'jump' && (
+              <div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px', gap: 12, marginBottom: 12 }}>
+                  <FormField
+                    label="JUMP HOST"
+                    type="text"
+                    value={proxyHost}
+                    onChange={setProxyHost}
+                    required
+                    placeholder="jump.example.com"
+                  />
+                  <FormField
+                    label="JUMP PORT"
+                    type="number"
+                    value={String(proxyPort)}
+                    onChange={(v) => setProxyPort(parseInt(v) || 22)}
+                    placeholder="22"
+                  />
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <FormField
+                    label="JUMP USERNAME"
+                    type="text"
+                    value={proxyUsername}
+                    onChange={setProxyUsername}
+                    required
+                    placeholder="ec2-user"
+                  />
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <FormField
+                    label="JUMP SSH CREDENTIAL ID"
+                    type="number"
+                    value={String(proxyCredentialId)}
+                    onChange={(v) => setProxyCredentialId(parseInt(v) || 0)}
+                    placeholder="Credential ID"
+                  />
+                </div>
+                <p style={{ color: '#6b6b8a', fontSize: 12, margin: 0 }}>
+                  The jump host uses SSH key or password authentication via the credential referenced above.
+                </p>
+              </div>
+            )}
+            {(proxyType === 'socks5' || proxyType === 'http' || proxyType === 'https') && (
               <div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px', gap: 12, marginBottom: 12 }}>
                   <FormField
@@ -388,21 +456,19 @@ export default function NodeModal({ node, onClose, onSave }: NodeModalProps) {
                     placeholder="1080"
                   />
                 </div>
-                {(proxyType === 'socks5' || proxyType === 'http' || proxyType === 'https') && (
-                  <div
-                    style={{
-                      padding: '8px 12px',
-                      background: 'rgba(157,78,221,0.08)',
-                      border: '1px solid rgba(157,78,221,0.2)',
-                      color: '#9d4edd',
-                      fontSize: 11,
-                      fontFamily: "'Rajdhani', sans-serif",
-                      marginBottom: 12,
-                    }}
-                  >
-                    Proxy credentials can be stored in your credentials (optional)
-                  </div>
-                )}
+                <div
+                  style={{
+                    padding: '8px 12px',
+                    background: 'rgba(157,78,221,0.08)',
+                    border: '1px solid rgba(157,78,221,0.2)',
+                    color: '#9d4edd',
+                    fontSize: 11,
+                    fontFamily: "'Rajdhani', sans-serif",
+                    marginBottom: 12,
+                  }}
+                >
+                  Proxy credentials can be stored in your credentials (optional)
+                </div>
                 <FormField
                   label="PROXY CREDENTIAL ID (0 = none)"
                   type="number"

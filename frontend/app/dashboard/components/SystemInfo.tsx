@@ -134,32 +134,49 @@ function InfoCard({
 export default function SystemInfo({ nodeId }: SystemInfoProps) {
   const [data, setData] = useState<SysInfoData | null>(null)
   const [loading, setLoading] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
-  const fetchSysInfo = useCallback(async () => {
+  const loadCached = useCallback(async () => {
     if (!nodeId) return
-    setLoading(true)
+    try {
+      const res = await apiGet(`/api/nodes/${nodeId}/sysinfo/cached`)
+      if (res.ok) {
+        const json = await res.json()
+        setData(json)
+      }
+      // 404 = no cache yet, that's fine — live refresh will populate it
+    } catch {
+      // ignore
+    }
+  }, [nodeId])
+
+  const refreshLive = useCallback(async () => {
+    if (!nodeId) return
+    setRefreshing(true)
     setError('')
     try {
       const res = await apiGet(`/api/nodes/${nodeId}/sysinfo`)
-      if (!res.ok) throw new Error(`Failed to fetch system info (${res.status})`)
+      if (!res.ok) throw new Error(`sysinfo: ${res.status}`)
       const json = await res.json()
       setData(json)
       setLastUpdated(new Date())
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch system info')
+      setError(err instanceof Error ? err.message : 'Refresh failed')
     } finally {
-      setLoading(false)
+      setRefreshing(false)
     }
   }, [nodeId])
 
   useEffect(() => {
     if (!nodeId) return
-    fetchSysInfo()
-    const interval = setInterval(fetchSysInfo, 30000)
+    setLoading(true)
+    loadCached().finally(() => setLoading(false))
+    refreshLive()
+    const interval = setInterval(refreshLive, 30000)
     return () => clearInterval(interval)
-  }, [nodeId, fetchSysInfo])
+  }, [nodeId, loadCached, refreshLive])
 
   if (!nodeId) {
     return (
@@ -219,6 +236,17 @@ export default function SystemInfo({ nodeId }: SystemInfoProps) {
           SYSTEM INFORMATION
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {refreshing && (
+            <span
+              style={{
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 10,
+                color: '#6b6b8a',
+              }}
+            >
+              Refreshing...
+            </span>
+          )}
           {lastUpdated && (
             <span
               style={{
@@ -231,21 +259,21 @@ export default function SystemInfo({ nodeId }: SystemInfoProps) {
             </span>
           )}
           <button
-            onClick={fetchSysInfo}
-            disabled={loading}
+            onClick={refreshLive}
+            disabled={refreshing}
             style={{
               background: 'transparent',
               border: '1px solid rgba(0,255,255,0.2)',
-              color: loading ? '#303060' : '#6070a0',
+              color: refreshing ? '#303060' : '#6070a0',
               fontFamily: "'Orbitron', sans-serif",
               fontSize: 9,
               letterSpacing: '0.15em',
               padding: '3px 10px',
-              cursor: loading ? 'not-allowed' : 'pointer',
+              cursor: refreshing ? 'not-allowed' : 'pointer',
               transition: 'color 0.15s, border-color 0.15s',
             }}
           >
-            {loading ? '...' : '↺ REFRESH'}
+            {refreshing ? '...' : '↺ REFRESH'}
           </button>
         </div>
       </div>
