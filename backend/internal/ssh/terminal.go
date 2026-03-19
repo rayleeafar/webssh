@@ -94,12 +94,17 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 
 	var host, username, encryptedCreds, authType string
 	var port, ownerID int
+	var proxyType, proxyHost, proxyUsername string
+	var proxyPort, proxyCredentialID int
 	err = h.db.QueryRow(`
-		SELECT n.host, n.port, n.username, c.auth_type, c.encrypted_value, n.user_id
+		SELECT n.host, n.port, n.username, c.auth_type, c.encrypted_value, n.user_id,
+		       COALESCE(n.proxy_type,''), COALESCE(n.proxy_host,''), COALESCE(n.proxy_port,0),
+		       COALESCE(n.proxy_username,''), COALESCE(n.proxy_credential_id,0)
 		FROM nodes n
 		JOIN credentials c ON n.credential_id = c.id
 		WHERE n.id = ?
-	`, nodeID).Scan(&host, &port, &username, &authType, &encryptedCreds, &ownerID)
+	`, nodeID).Scan(&host, &port, &username, &authType, &encryptedCreds, &ownerID,
+		&proxyType, &proxyHost, &proxyPort, &proxyUsername, &proxyCredentialID)
 	if err == sql.ErrNoRows {
 		http.Error(w, "Node not found", http.StatusNotFound)
 		return
@@ -149,11 +154,35 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 
-	dialFn := h.dialSSH
-	if dialFn == nil {
-		dialFn = defaultSSHDial
+	var client sshClientConn
+	if proxyType != "" {
+		// Load proxy credentials if a proxy credential ID is configured.
+		var proxyCreds string
+		if proxyCredentialID > 0 {
+			var proxyAuthType, proxyEncCreds string
+			h.db.QueryRow(
+				"SELECT auth_type, encrypted_value FROM credentials WHERE id = ? AND user_id = ?",
+				proxyCredentialID, user.ID,
+			).Scan(&proxyAuthType, &proxyEncCreds)
+			proxyCreds, _ = crypto.Decrypt(proxyEncCreds, key)
+		}
+		cfg := NodeDialConfig{
+			TargetHost:    host,
+			TargetPort:    port,
+			ProxyType:     proxyType,
+			ProxyHost:     proxyHost,
+			ProxyPort:     proxyPort,
+			ProxyUsername: proxyUsername,
+			ProxyCreds:    proxyCreds,
+		}
+		client, err = dialWithProxy(cfg, sshConfig)
+	} else {
+		dialFn := h.dialSSH
+		if dialFn == nil {
+			dialFn = defaultSSHDial
+		}
+		client, err = dialFn("tcp", fmt.Sprintf("%s:%d", host, port), sshConfig)
 	}
-	client, err := dialFn("tcp", fmt.Sprintf("%s:%d", host, port), sshConfig)
 	if err != nil {
 		log.Printf("SSH connection failed for node %d: %v", nodeID, err)
 		conn.WriteMessage(websocket.TextMessage, []byte("SSH connection failed. Check node credentials and connectivity.\r\n"))

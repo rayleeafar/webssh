@@ -6,8 +6,10 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -408,6 +410,80 @@ func TestHandleWebSocket_ConcurrentSessions(t *testing.T) {
 			t.Errorf("%s: expected non-empty initial SSH message", r.name)
 		}
 	}
+}
+
+// --- Proxy / dialTarget tests ---
+
+// TestDialTarget_NoProxy verifies that dialTarget with an empty ProxyType
+// attempts a plain TCP connection to the target address (and fails with a
+// connection-refused error when nothing is listening, not a proxy error).
+func TestDialTarget_NoProxy(t *testing.T) {
+	// Pick an ephemeral port that is almost certainly not listening.
+	cfg := NodeDialConfig{
+		TargetHost: "127.0.0.1",
+		TargetPort: 1, // port 1 is never open in tests
+		ProxyType:  "",
+	}
+	conn, err := dialTarget(cfg)
+	if err == nil {
+		conn.Close()
+		t.Fatal("expected an error dialing port 1, got none")
+	}
+	// The error should mention a connection issue, not a proxy issue.
+	errStr := err.Error()
+	if contains(errStr, "proxy") || contains(errStr, "socks") {
+		t.Errorf("expected plain TCP error, got proxy-related error: %v", err)
+	}
+}
+
+// TestHTTPConnectDial_Non200 verifies that httpConnectDial returns an error
+// when the proxy returns a non-200 status code (e.g. 407 Proxy Auth Required).
+func TestHTTPConnectDial_Non200(t *testing.T) {
+	// Start a test TCP server that responds to CONNECT with 407.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start test listener: %v", err)
+	}
+	defer ln.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		// Drain the CONNECT request then reply with 407.
+		buf := make([]byte, 4096)
+		c.Read(buf)
+		c.Write([]byte("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n"))
+	}()
+
+	host, portStr, _ := net.SplitHostPort(ln.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+
+	conn, err := httpConnectDial(host, port, "", "", "10.0.0.1", 22)
+	if err == nil {
+		conn.Close()
+		t.Fatal("expected error for non-200 proxy response, got none")
+	}
+	if !contains(err.Error(), "407") {
+		t.Errorf("expected 407 in error message, got: %v", err)
+	}
+	<-done
+}
+
+// contains is a simple case-sensitive substring check used in tests.
+func contains(s, sub string) bool {
+	return len(sub) <= len(s) && (sub == "" || func() bool {
+		for i := 0; i <= len(s)-len(sub); i++ {
+			if s[i:i+len(sub)] == sub {
+				return true
+			}
+		}
+		return false
+	}())
 }
 
 func intToStr(i int) string {

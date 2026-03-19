@@ -334,13 +334,18 @@ func (h *SFTPHandler) Mkdir(w http.ResponseWriter, r *http.Request) {
 func (h *SFTPHandler) getSFTPClient(nodeID, userID int, encryptionKey string) (sftpClientIF, func(), error) {
 	var host, nodeUsername, encryptedCreds, authType string
 	var port, ownerID int
+	var proxyType, proxyHost, proxyUsername string
+	var proxyPort, proxyCredentialID int
 
 	err := h.db.QueryRow(`
-		SELECT n.host, n.port, n.username, c.auth_type, c.encrypted_value, n.user_id
+		SELECT n.host, n.port, n.username, c.auth_type, c.encrypted_value, n.user_id,
+		       COALESCE(n.proxy_type,''), COALESCE(n.proxy_host,''), COALESCE(n.proxy_port,0),
+		       COALESCE(n.proxy_username,''), COALESCE(n.proxy_credential_id,0)
 		FROM nodes n
 		JOIN credentials c ON n.credential_id = c.id
 		WHERE n.id = ?
-	`, nodeID).Scan(&host, &port, &nodeUsername, &authType, &encryptedCreds, &ownerID)
+	`, nodeID).Scan(&host, &port, &nodeUsername, &authType, &encryptedCreds, &ownerID,
+		&proxyType, &proxyHost, &proxyPort, &proxyUsername, &proxyCredentialID)
 	if err == sql.ErrNoRows {
 		return nil, nil, fmt.Errorf("node not found")
 	}
@@ -374,9 +379,43 @@ func (h *SFTPHandler) getSFTPClient(nodeID, userID int, encryptionKey string) (s
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 
-	sshClient, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", host, port), sshConfig)
-	if err != nil {
-		return nil, nil, fmt.Errorf("SSH connection failed: %v", err)
+	var sshClient *ssh.Client
+	if proxyType != "" {
+		// Load proxy credentials if a proxy credential ID is configured.
+		var proxyCreds string
+		if proxyCredentialID > 0 {
+			var proxyAuthType, proxyEncCreds string
+			h.db.QueryRow(
+				"SELECT auth_type, encrypted_value FROM credentials WHERE id = ? AND user_id = ?",
+				proxyCredentialID, userID,
+			).Scan(&proxyAuthType, &proxyEncCreds)
+			proxyCreds, _ = crypto.Decrypt(proxyEncCreds, key)
+		}
+		cfg := sshutil.NodeDialConfig{
+			TargetHost:    host,
+			TargetPort:    port,
+			ProxyType:     proxyType,
+			ProxyHost:     proxyHost,
+			ProxyPort:     proxyPort,
+			ProxyUsername: proxyUsername,
+			ProxyCreds:    proxyCreds,
+		}
+		conn, err := sshutil.DialTarget(cfg)
+		if err != nil {
+			return nil, nil, fmt.Errorf("SSH proxy connection failed: %v", err)
+		}
+		addr := fmt.Sprintf("%s:%d", host, port)
+		c, chans, reqs, err := ssh.NewClientConn(conn, addr, sshConfig)
+		if err != nil {
+			conn.Close()
+			return nil, nil, fmt.Errorf("SSH handshake failed: %v", err)
+		}
+		sshClient = ssh.NewClient(c, chans, reqs)
+	} else {
+		sshClient, err = ssh.Dial("tcp", fmt.Sprintf("%s:%d", host, port), sshConfig)
+		if err != nil {
+			return nil, nil, fmt.Errorf("SSH connection failed: %v", err)
+		}
 	}
 
 	sftpClient, err := sftp.NewClient(sshClient)
