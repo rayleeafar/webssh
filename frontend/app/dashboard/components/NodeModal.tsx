@@ -9,6 +9,10 @@ interface Node {
   host: string
   port: number
   username: string
+  proxy_type?: string
+  proxy_host?: string
+  proxy_port?: number
+  proxy_credential_id?: number
   created_at: string
 }
 
@@ -28,6 +32,10 @@ export default function NodeModal({ node, onClose, onSave }: NodeModalProps) {
   const [password, setPassword] = useState('')
   const [privateKey, setPrivateKey] = useState('')
   const [authTab, setAuthTab] = useState<AuthTab>('password')
+  const [proxyType, setProxyType] = useState<'' | 'socks5' | 'http' | 'https' | 'jump'>(node?.proxy_type as '' | 'socks5' | 'http' | 'https' | 'jump' || '')
+  const [proxyHost, setProxyHost] = useState(node?.proxy_host || '')
+  const [proxyPort, setProxyPort] = useState(node?.proxy_port || 1080)
+  const [proxyCredentialId, setProxyCredentialId] = useState(node?.proxy_credential_id || 0)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -47,6 +55,12 @@ export default function NodeModal({ node, onClose, onSave }: NodeModalProps) {
     setError('')
     setLoading(true)
 
+    if (proxyType !== '' && proxyHost === '') {
+      setError('Proxy host is required')
+      setLoading(false)
+      return
+    }
+
     const payload = {
       name,
       host,
@@ -54,6 +68,10 @@ export default function NodeModal({ node, onClose, onSave }: NodeModalProps) {
       username,
       password: authTab === 'password' ? password : '',
       private_key: authTab === 'private_key' ? privateKey : '',
+      proxy_type: proxyType,
+      proxy_host: proxyType ? proxyHost : '',
+      proxy_port: proxyType ? proxyPort : 0,
+      proxy_credential_id: proxyCredentialId,
     }
 
     try {
@@ -296,6 +314,101 @@ export default function NodeModal({ node, onClose, onSave }: NodeModalProps) {
                   onBlur={(e) => {
                     e.currentTarget.style.borderBottomColor = 'rgba(0,255,255,0.3)'
                   }}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Proxy configuration */}
+          <div style={{ marginTop: 24, marginBottom: 8 }}>
+            <div
+              style={{
+                fontFamily: "'Orbitron', sans-serif",
+                fontSize: 9,
+                letterSpacing: '0.2em',
+                color: '#404070',
+                marginBottom: 10,
+              }}
+            >
+              PROXY
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label
+                style={{
+                  display: 'block',
+                  fontFamily: "'Orbitron', sans-serif",
+                  fontSize: 9,
+                  letterSpacing: '0.2em',
+                  color: '#404070',
+                  marginBottom: 8,
+                }}
+              >
+                PROXY TYPE
+              </label>
+              <select
+                value={proxyType}
+                onChange={(e) => setProxyType(e.target.value as '' | 'socks5' | 'http' | 'https' | 'jump')}
+                style={{
+                  width: '100%',
+                  background: 'rgba(8,8,16,0.8)',
+                  border: 'none',
+                  borderBottom: '1px solid rgba(0,255,255,0.3)',
+                  color: '#c8d8f0',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: 12,
+                  padding: '8px 4px',
+                  outline: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                <option value="">None</option>
+                <option value="socks5">SOCKS5</option>
+                <option value="http">HTTP</option>
+                <option value="https">HTTPS</option>
+                <option value="jump">Jump Server</option>
+              </select>
+            </div>
+
+            {proxyType !== '' && (
+              <div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px', gap: 12, marginBottom: 12 }}>
+                  <FormField
+                    label="PROXY HOST"
+                    type="text"
+                    value={proxyHost}
+                    onChange={setProxyHost}
+                    required
+                    placeholder="proxy.example.com"
+                  />
+                  <FormField
+                    label="PROXY PORT"
+                    type="number"
+                    value={String(proxyPort)}
+                    onChange={(v) => setProxyPort(parseInt(v) || 1080)}
+                    placeholder="1080"
+                  />
+                </div>
+                {(proxyType === 'socks5' || proxyType === 'http' || proxyType === 'https') && (
+                  <div
+                    style={{
+                      padding: '8px 12px',
+                      background: 'rgba(157,78,221,0.08)',
+                      border: '1px solid rgba(157,78,221,0.2)',
+                      color: '#9d4edd',
+                      fontSize: 11,
+                      fontFamily: "'Rajdhani', sans-serif",
+                      marginBottom: 12,
+                    }}
+                  >
+                    Proxy credentials can be stored in your credentials (optional)
+                  </div>
+                )}
+                <FormField
+                  label="PROXY CREDENTIAL ID (0 = none)"
+                  type="number"
+                  value={String(proxyCredentialId)}
+                  onChange={(v) => setProxyCredentialId(parseInt(v) || 0)}
+                  placeholder="0"
                 />
               </div>
             )}

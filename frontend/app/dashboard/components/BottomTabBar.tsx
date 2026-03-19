@@ -1,14 +1,15 @@
 'use client'
 
 interface BottomTabBarProps {
-  activeTab: 'sftp' | 'sysinfo' | null
-  onTabClick: (tab: 'sftp' | 'sysinfo') => void
+  activeTab: 'sftp' | 'sysinfo' | 'batch' | null
+  onTabClick: (tab: 'sftp' | 'sysinfo' | 'batch') => void
 }
 
 export default function BottomTabBar({ activeTab, onTabClick }: BottomTabBarProps) {
-  const tabs: { id: 'sftp' | 'sysinfo'; label: string }[] = [
+  const tabs: { id: 'sftp' | 'sysinfo' | 'batch'; label: string }[] = [
     { id: 'sftp', label: 'SFTP' },
     { id: 'sysinfo', label: 'SYSINFO' },
+    { id: 'batch', label: 'BATCH' },
   ]
 
   return (

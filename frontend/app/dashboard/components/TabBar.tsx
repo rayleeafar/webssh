@@ -47,9 +47,18 @@ export default function TabBar({ tabs, activeTabId, onSelect, onClose }: TabBarP
           NO ACTIVE TERMINALS
         </div>
       ) : (
-        tabs.map((tab) => {
+        (() => {
+          const nodeTabCounts: Record<number, number> = {}
+          const tabsWithIndex = tabs.map(tab => {
+            const idx = nodeTabCounts[tab.nodeId] ?? 0
+            nodeTabCounts[tab.nodeId] = idx + 1
+            return { ...tab, sessionIndex: idx }
+          })
+
+          return tabsWithIndex.map((tab) => {
           const isActive = tab.id === activeTabId
           const isHovered = hoveredTabId === tab.id
+          const label = tab.sessionIndex === 0 ? tab.nodeName : `${tab.nodeName} #${tab.sessionIndex + 1}`
 
           return (
             <div
@@ -104,7 +113,7 @@ export default function TabBar({ tabs, activeTabId, onSelect, onClose }: TabBarP
                   minWidth: 0,
                 }}
               >
-                {tab.nodeName}
+                {label}
               </span>
               <button
                 onClick={(e) => {
@@ -130,6 +139,7 @@ export default function TabBar({ tabs, activeTabId, onSelect, onClose }: TabBarP
             </div>
           )
         })
+        })()
       )}
     </div>
   )

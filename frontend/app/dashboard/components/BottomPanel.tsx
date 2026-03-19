@@ -3,14 +3,22 @@
 import { useRef, useCallback } from 'react'
 import SFTPBrowser from './SFTPBrowser'
 import SystemInfo from './SystemInfo'
+import BatchExec from './BatchExec'
+
+interface Node {
+  id: number
+  name: string
+  host: string
+}
 
 interface BottomPanelProps {
-  tab: 'sftp' | 'sysinfo'
-  onTabChange: (tab: 'sftp' | 'sysinfo') => void
+  tab: 'sftp' | 'sysinfo' | 'batch'
+  onTabChange: (tab: 'sftp' | 'sysinfo' | 'batch') => void
   onClose: () => void
   height: number
   onHeightChange: (h: number) => void
   activeNodeId: number | null
+  nodes: Node[]
 }
 
 export default function BottomPanel({
@@ -19,6 +27,7 @@ export default function BottomPanel({
   height,
   onHeightChange,
   activeNodeId,
+  nodes,
 }: BottomPanelProps) {
   const dragStartY = useRef<number>(0)
   const dragStartH = useRef<number>(0)
@@ -100,7 +109,9 @@ export default function BottomPanel({
 
       {/* Content */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {!activeNodeId ? (
+        {tab === 'batch' ? (
+          <BatchExec nodes={nodes} />
+        ) : !activeNodeId ? (
           <div
             style={{
               flex: 1,

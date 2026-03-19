@@ -17,6 +17,7 @@ interface SysInfoData {
   disk_used: string
   disk_pct: string
   ip_addr: string
+  stale?: boolean
 }
 
 interface SystemInfoProps {
@@ -261,6 +262,22 @@ export default function SystemInfo({ nodeId }: SystemInfoProps) {
           }}
         >
           {error}
+        </div>
+      )}
+
+      {data?.stale && (
+        <div
+          style={{
+            padding: '6px 12px',
+            background: '#f59e0b',
+            color: '#1a1000',
+            fontSize: 12,
+            fontFamily: "'Rajdhani', sans-serif",
+            fontWeight: 600,
+            flexShrink: 0,
+          }}
+        >
+          Showing cached data — live refresh unavailable
         </div>
       )}
 

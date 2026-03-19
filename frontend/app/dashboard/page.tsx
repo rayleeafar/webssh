@@ -28,6 +28,10 @@ interface Node {
   host: string
   port: number
   username: string
+  proxy_type?: string
+  proxy_host?: string
+  proxy_port?: number
+  proxy_credential_id?: number
   created_at: string
 }
 
@@ -35,7 +39,7 @@ export default function DashboardPage() {
   const [nodes, setNodes] = useState<Node[]>([])
   const [tabs, setTabs] = useState<Tab[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
-  const [bottomTab, setBottomTab] = useState<'sftp' | 'sysinfo' | null>(null)
+  const [bottomTab, setBottomTab] = useState<'sftp' | 'sysinfo' | 'batch' | null>(null)
   const [bottomHeight, setBottomHeight] = useState(240)
   const [showNodeModal, setShowNodeModal] = useState(false)
   const [editingNode, setEditingNode] = useState<Node | null>(null)
@@ -79,22 +83,9 @@ export default function DashboardPage() {
   }, [router, fetchNodes])
 
   const openTab = useCallback((node: Node) => {
-    // Generate id outside the updater so it's stable if React calls
-    // the updater more than once (concurrent mode).
     const newTabId = crypto.randomUUID()
-    let idToActivate = newTabId
-
-    setTabs((prev) => {
-      const existing = prev.find((t) => t.nodeId === node.id)
-      if (existing) {
-        idToActivate = existing.id
-        return prev
-      }
-      return [...prev, { id: newTabId, nodeId: node.id, nodeName: node.name, host: node.host }]
-    })
-
-    // Call outside the updater — no side-effects inside state updaters.
-    setActiveTabId(idToActivate)
+    setTabs(prev => [...prev, { id: newTabId, nodeId: node.id, nodeName: node.name, host: node.host }])
+    setActiveTabId(newTabId)
   }, [])
 
   const closeTab = useCallback((tabId: string) => {
@@ -136,7 +127,7 @@ export default function DashboardPage() {
   const activeNodeId = activeTab?.nodeId ?? null
   const activeNodeIds = new Set(tabs.map((t) => t.nodeId))
 
-  const handleBottomTabClick = (t: 'sftp' | 'sysinfo') => {
+  const handleBottomTabClick = (t: 'sftp' | 'sysinfo' | 'batch') => {
     setBottomTab((prev) => (prev === t ? null : t))
   }
 
@@ -215,6 +206,7 @@ export default function DashboardPage() {
               height={bottomHeight}
               onHeightChange={setBottomHeight}
               activeNodeId={activeNodeId}
+              nodes={nodes}
             />
           )}
 
