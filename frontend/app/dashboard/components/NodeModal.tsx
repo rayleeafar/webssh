@@ -14,6 +14,10 @@ interface Node {
   proxy_port?: number
   proxy_username?: string
   proxy_credential_id?: number
+  jump_proxy_type?: string
+  jump_proxy_host?: string
+  jump_proxy_port?: number
+  jump_proxy_credential_id?: number
   created_at: string
 }
 
@@ -38,6 +42,10 @@ export default function NodeModal({ node, onClose, onSave }: NodeModalProps) {
   const [proxyPort, setProxyPort] = useState(node?.proxy_port || 1080)
   const [proxyUsername, setProxyUsername] = useState(node?.proxy_username || '')
   const [proxyCredentialId, setProxyCredentialId] = useState(node?.proxy_credential_id || 0)
+  const [jumpProxyType, setJumpProxyType] = useState<'' | 'socks5' | 'http' | 'https'>(node?.jump_proxy_type as any || '')
+  const [jumpProxyHost, setJumpProxyHost] = useState(node?.jump_proxy_host || '')
+  const [jumpProxyPort, setJumpProxyPort] = useState(node?.jump_proxy_port || 1080)
+  const [jumpProxyCredentialId, setJumpProxyCredentialId] = useState(node?.jump_proxy_credential_id || 0)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -54,6 +62,10 @@ export default function NodeModal({ node, onClose, onSave }: NodeModalProps) {
       setProxyPort(node.proxy_port || 1080)
       setProxyUsername(node.proxy_username || '')
       setProxyCredentialId(node.proxy_credential_id || 0)
+      if (node.jump_proxy_type) setJumpProxyType(node.jump_proxy_type as any)
+      if (node.jump_proxy_host) setJumpProxyHost(node.jump_proxy_host)
+      if (node.jump_proxy_port) setJumpProxyPort(node.jump_proxy_port)
+      if (node.jump_proxy_credential_id) setJumpProxyCredentialId(node.jump_proxy_credential_id)
     }
   }, [node])
 
@@ -83,6 +95,11 @@ export default function NodeModal({ node, onClose, onSave }: NodeModalProps) {
         setLoading(false)
         return
       }
+      if (jumpProxyType !== '' && jumpProxyHost === '') {
+        setError('Jump host upstream proxy host is required')
+        setLoading(false)
+        return
+      }
     }
 
     const payload = {
@@ -97,6 +114,10 @@ export default function NodeModal({ node, onClose, onSave }: NodeModalProps) {
       proxy_port: proxyType ? proxyPort : 0,
       proxy_username: proxyUsername,
       proxy_credential_id: proxyCredentialId,
+      jump_proxy_type: proxyType === 'jump' ? jumpProxyType : '',
+      jump_proxy_host: proxyType === 'jump' && jumpProxyType ? jumpProxyHost : '',
+      jump_proxy_port: proxyType === 'jump' && jumpProxyType ? jumpProxyPort : 0,
+      jump_proxy_credential_id: proxyType === 'jump' ? jumpProxyCredentialId : 0,
     }
 
     try {
@@ -435,6 +456,64 @@ export default function NodeModal({ node, onClose, onSave }: NodeModalProps) {
                 <p style={{ color: '#6b6b8a', fontSize: 12, margin: 0 }}>
                   The jump host uses SSH key or password authentication via the credential referenced above.
                 </p>
+                {/* Optional: route jump host through its own upstream proxy */}
+                <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid #1a1a2e' }}>
+                  <label style={{ color: '#6b6b8a', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Jump Host Upstream Proxy (Optional)
+                  </label>
+                  <p style={{ color: '#6b6b8a', fontSize: 11, margin: '4px 0 8px' }}>
+                    If the jump host can only be reached through a SOCKS5 or HTTP proxy, configure it here.
+                  </p>
+                  <select
+                    value={jumpProxyType}
+                    onChange={(e) => setJumpProxyType(e.target.value as '' | 'socks5' | 'http' | 'https')}
+                    style={{
+                      width: '100%',
+                      background: 'rgba(8,8,16,0.8)',
+                      border: 'none',
+                      borderBottom: '1px solid rgba(0,255,255,0.3)',
+                      color: '#c8d8f0',
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: 12,
+                      padding: '8px 4px',
+                      outline: 'none',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <option value="">None</option>
+                    <option value="socks5">SOCKS5</option>
+                    <option value="http">HTTP</option>
+                    <option value="https">HTTPS</option>
+                  </select>
+
+                  {jumpProxyType && (
+                    <>
+                      <input
+                        placeholder="Jump proxy host"
+                        value={jumpProxyHost}
+                        onChange={(e) => setJumpProxyHost(e.target.value)}
+                        className="neon-input"
+                        style={{ marginTop: 10 }}
+                      />
+                      <input
+                        type="number"
+                        placeholder="Jump proxy port"
+                        value={jumpProxyPort}
+                        onChange={(e) => setJumpProxyPort(Number(e.target.value))}
+                        className="neon-input"
+                        style={{ marginTop: 10 }}
+                      />
+                      <input
+                        type="number"
+                        placeholder="Proxy Credential ID (optional)"
+                        value={jumpProxyCredentialId || ''}
+                        onChange={(e) => setJumpProxyCredentialId(Number(e.target.value))}
+                        className="neon-input"
+                        style={{ marginTop: 10 }}
+                      />
+                    </>
+                  )}
+                </div>
               </div>
             )}
             {(proxyType === 'socks5' || proxyType === 'http' || proxyType === 'https') && (
