@@ -2,6 +2,12 @@
 const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
+  env: {
+    // Expose NEXT_PUBLIC_WS_URL so it is available in the browser bundle even
+    // when set only as a Docker build-arg (Next.js requires NEXT_PUBLIC_ prefix
+    // for client-side access; listing it here ensures it survives the build).
+    NEXT_PUBLIC_WS_URL: process.env.NEXT_PUBLIC_WS_URL || '',
+  },
   /**
    * When NEXT_PUBLIC_API_URL is empty (same-origin deployment), proxy all
    * backend routes through Next.js so the frontend container can reach the

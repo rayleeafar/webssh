@@ -23,6 +23,11 @@ services:
         # Set this to the public URL of the backend (e.g. http://yourhost:8080).
         # Defaults to empty string for same-origin proxy via a reverse proxy.
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+        # NEXT_PUBLIC_WS_URL sets the WebSocket base URL baked into the bundle.
+        # Next.js rewrites() do NOT proxy WebSocket upgrades, so this must point
+        # directly at the backend when not using a reverse proxy (e.g. nginx).
+        # Default: ws://localhost:8080 matches the exposed backend port above.
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8080}
     restart: unless-stopped
     ports:
       - "3000:3000"

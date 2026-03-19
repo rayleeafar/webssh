@@ -367,5 +367,11 @@ func migrateSessions(db *sql.DB) error {
 		}
 	}
 
+	// Remove sessions that have an empty csrf_token — these predate CSRF support
+	// and cannot satisfy the CSRF middleware. Users will be prompted to log in again.
+	if _, err := db.Exec(`DELETE FROM sessions WHERE csrf_token = ''`); err != nil {
+		return err
+	}
+
 	return nil
 }

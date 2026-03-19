@@ -92,10 +92,21 @@ export async function apiDelete(url: string): Promise<Response> {
 }
 
 /**
- * Derive the WebSocket base URL from the current page origin,
- * upgrading to wss:// when the page is served over HTTPS.
+ * Derive the WebSocket base URL.
+ *
+ * Priority order:
+ * 1. NEXT_PUBLIC_WS_URL — explicit WebSocket base (e.g. ws://localhost:8080)
+ * 2. NEXT_PUBLIC_API_URL — derive wss/ws from the API base URL
+ * 3. Current page origin — only works if a reverse proxy handles /ws/* upgrades
+ *
+ * Next.js rewrites() do not proxy WebSocket upgrade connections, so in
+ * development or plain Docker deployments set NEXT_PUBLIC_WS_URL to the
+ * backend address (e.g. ws://localhost:8080) to bypass the Next.js proxy.
  */
 export function getWebSocketBase(): string {
+  const wsUrl = process.env.NEXT_PUBLIC_WS_URL || ''
+  if (wsUrl) return wsUrl
+
   const apiBase = process.env.NEXT_PUBLIC_API_URL || ''
   if (apiBase) {
     return apiBase.replace(/^https/, 'wss').replace(/^http/, 'ws')
