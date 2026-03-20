@@ -11,3 +11,7 @@ data/
 .humanize*
 docs/plan2.md
 frontend/tsconfig.tsbuildinfo
+frontend/out/
+backend/internal/static/files/*
+!backend/internal/static/files/.gitkeep
+webssh

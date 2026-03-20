@@ -52,7 +52,7 @@ export async function apiRequest(
 
   // Add CSRF token for state-changing methods, but not for the auth
   // endpoints that establish a session (no cookie yet → /api/auth/me 401).
-  const skipCsrf = ['/api/auth/login', '/api/auth/register', '/api/auth/logout']
+  const skipCsrf = ['/api/auth/login', '/api/auth/register', '/api/auth/logout', '/api/auth/2fa/verify']
   const needsCsrf =
     options.method &&
     ['POST', 'PUT', 'DELETE', 'PATCH'].includes(options.method) &&

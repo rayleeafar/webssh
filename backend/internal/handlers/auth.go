@@ -81,12 +81,22 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := h.authService.Login(req.Username, req.Password)
+	result, err := h.authService.Login(req.Username, req.Password)
 	if err != nil {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
+	if result.Requires2FA {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"requires_2fa": true,
+			"temp_token":   result.TempToken,
+		})
+		return
+	}
+
+	session := result.Session
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session_token",
 		Value:    session.Token,

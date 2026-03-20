@@ -42,7 +42,7 @@ func setupSFTPTestDB(t *testing.T) (*SFTPHandler, *auth.Service, *models.User) {
 	svc := auth.NewService(db, sftpTestMasterKey)
 	svc.Register("alice", "pass")
 	session, _ := svc.Login("alice", "pass")
-	user, _ := svc.ValidateSession(session.Token)
+	user, _ := svc.ValidateSession(session.Session.Token)
 
 	return NewSFTPHandler(db), svc, user
 }
@@ -282,7 +282,7 @@ func TestSFTPList_SSHConnectionFailure(t *testing.T) {
 	svc := auth.NewService(db, sftpTestMasterKey)
 	svc.Register("alice", "pass")
 	session, _ := svc.Login("alice", "pass")
-	user, _ := svc.ValidateSession(session.Token)
+	user, _ := svc.ValidateSession(session.Session.Token)
 
 	nodeID := insertSFTPNode(t, db, user, "127.0.0.1", 1) // port 1 → connection refused
 
@@ -311,7 +311,7 @@ func TestSFTPDownload_SSHConnectionFailure(t *testing.T) {
 	svc := auth.NewService(db, sftpTestMasterKey)
 	svc.Register("alice", "pass")
 	session, _ := svc.Login("alice", "pass")
-	user, _ := svc.ValidateSession(session.Token)
+	user, _ := svc.ValidateSession(session.Session.Token)
 
 	nodeID := insertSFTPNode(t, db, user, "127.0.0.1", 1)
 

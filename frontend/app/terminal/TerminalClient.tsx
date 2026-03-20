@@ -1,14 +1,13 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import { Terminal } from 'xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import 'xterm/css/xterm.css'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { apiGet, getWebSocketBase, setCsrfToken } from '@/lib/api'
 
+
 export default function TerminalClient() {
-  const params = useParams()
+  const searchParams = useSearchParams()
+  const nodeId = (searchParams.get('nodeId') || '') as string
   const router = useRouter()
   const terminalRef = useRef<HTMLDivElement>(null)
   const [error, setError] = useState('')
@@ -19,10 +18,16 @@ export default function TerminalClient() {
     // (React Strict Mode mounts→unmounts→mounts in dev)
     let cancelled = false
     let ws: WebSocket | null = null
-    let term: Terminal | null = null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let term: any = null
     let resizeObserver: ResizeObserver | null = null
 
     const init = async () => {
+      // Import xterm lazily inside useEffect so it is never evaluated server-side.
+      // xterm accesses browser-only globals (self, window) at module load time.
+      const { Terminal } = await import('xterm')
+      const { FitAddon } = await import('@xterm/addon-fit')
+
       const meRes = await apiGet('/api/auth/me')
       if (cancelled) return
       if (meRes.status === 401) {
@@ -34,7 +39,7 @@ export default function TerminalClient() {
         if (me.csrf_token) setCsrfToken(me.csrf_token)
       }
 
-      const nodeId = params.nodeId as string
+      // nodeId is already defined above
       term = new Terminal({
         cursorBlink: true,
         fontSize: 14,
@@ -81,7 +86,7 @@ export default function TerminalClient() {
         })
         if (terminalRef.current) resizeObserver.observe(terminalRef.current)
 
-        term!.onData((data) => {
+        term!.onData((data: string) => {
           if (ws && ws.readyState === WebSocket.OPEN) ws.send(data)
         })
       }
@@ -113,7 +118,7 @@ export default function TerminalClient() {
       ws?.close()
       term?.dispose()
     }
-  }, [params.nodeId, router])
+  }, [nodeId, router])
 
   return (
     <div className="h-screen flex flex-col bg-gray-900">

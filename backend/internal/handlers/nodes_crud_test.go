@@ -203,12 +203,12 @@ func TestCredentialEncryptionDBInsufficientForDecrypt(t *testing.T) {
 	// Read the raw wrapped key from DB
 	var rawWrappedKey string
 	if err := db.QueryRow("SELECT encryption_key FROM sessions WHERE token = ?",
-		session.Token).Scan(&rawWrappedKey); err != nil {
+		session.Session.Token).Scan(&rawWrappedKey); err != nil {
 		t.Fatal(err)
 	}
 
 	// Get the real (unwrapped) key via ValidateSession
-	user, err := svc.ValidateSession(session.Token)
+	user, err := svc.ValidateSession(session.Session.Token)
 	if err != nil {
 		t.Fatal(err)
 	}

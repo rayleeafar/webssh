@@ -9,7 +9,16 @@ type User struct {
 	EncryptionKeySalt string    `json:"-"`
 	EncryptionKey     string    `json:"-"`
 	CSRFToken         string    `json:"-"`
+	TOTPSecret        string    `json:"-"`
+	TOTPEnabled       bool      `json:"-"`
 	CreatedAt         time.Time `json:"created_at"`
+}
+
+type TempToken struct {
+	Token        string
+	UserID       int
+	EncryptedKey string
+	ExpiresAt    time.Time
 }
 
 type Node struct {

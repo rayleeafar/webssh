@@ -62,7 +62,7 @@ export default function Header({ user, onLogout }: HeaderProps) {
         </span>
       </div>
 
-      {/* Right: User info + logout */}
+      {/* Right: User info + settings + logout */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
         {user && (
           <span
@@ -76,6 +76,29 @@ export default function Header({ user, onLogout }: HeaderProps) {
             {user.username.toUpperCase()}
           </span>
         )}
+        <a
+          href="/settings"
+          style={{
+            fontFamily: "'Orbitron', sans-serif",
+            fontSize: 10,
+            letterSpacing: '0.2em',
+            color: '#6070a0',
+            textDecoration: 'none',
+            padding: '4px 12px',
+            border: '1px solid rgba(0,255,255,0.25)',
+            transition: 'color 0.2s, border-color 0.2s',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = '#00ffff'
+            e.currentTarget.style.borderColor = 'rgba(0,255,255,0.5)'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = '#6070a0'
+            e.currentTarget.style.borderColor = 'rgba(0,255,255,0.25)'
+          }}
+        >
+          SETTINGS
+        </a>
         <button
           onClick={handleLogout}
           style={{

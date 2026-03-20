@@ -15,6 +15,7 @@ import (
 	"github.com/webssh/manager/internal/middleware"
 	"github.com/webssh/manager/internal/sftp"
 	"github.com/webssh/manager/internal/ssh"
+	"github.com/webssh/manager/internal/static"
 )
 
 // deriveMasterKey converts the MASTER_SECRET env string into a 32-byte AES key.
@@ -65,6 +66,7 @@ func main() {
 
 	authService := auth.NewService(db, masterKey)
 	authHandler := handlers.NewAuthHandler(authService, cfg.EnableTLS)
+	totpHandler := handlers.NewTOTPHandler(authService, cfg.EnableTLS)
 	nodeHandler := handlers.NewNodeHandler(db)
 	sysInfoHandler := handlers.NewSysInfoHandler(db)
 	batchHandler := handlers.NewBatchHandler(db)
@@ -85,6 +87,13 @@ func main() {
 	mux.HandleFunc("/api/auth/login", authHandler.Login)
 	mux.Handle("/api/auth/logout", authMiddleware(csrfMiddleware(http.HandlerFunc(authHandler.Logout))))
 	mux.Handle("/api/auth/me", authMiddleware(http.HandlerFunc(authHandler.Me)))
+
+	// 2FA endpoints
+	mux.Handle("/api/auth/2fa/setup", authMiddleware(http.HandlerFunc(totpHandler.SetupTOTP)))
+	mux.Handle("/api/auth/2fa/status", authMiddleware(http.HandlerFunc(totpHandler.GetTOTPStatus)))
+	mux.Handle("/api/auth/2fa/enable", authMiddleware(csrfMiddleware(http.HandlerFunc(totpHandler.EnableTOTP))))
+	mux.Handle("/api/auth/2fa/disable", authMiddleware(csrfMiddleware(http.HandlerFunc(totpHandler.DisableTOTP))))
+	mux.HandleFunc("/api/auth/2fa/verify", totpHandler.VerifyTOTP)
 
 	mux.Handle("/api/nodes", authMiddleware(csrfMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -130,6 +139,12 @@ func main() {
 	mux.Handle("/api/sftp/upload", authMiddleware(csrfMiddleware(http.HandlerFunc(sftpHandler.Upload))))
 	mux.Handle("/api/sftp/delete", authMiddleware(csrfMiddleware(http.HandlerFunc(sftpHandler.Delete))))
 	mux.Handle("/api/sftp/mkdir", authMiddleware(csrfMiddleware(http.HandlerFunc(sftpHandler.Mkdir))))
+
+	// Serve embedded frontend when built with -tags embed (single-binary mode).
+	// All non-API paths fall through to the SPA index.html.
+	if h := static.Handler(); h != nil {
+		mux.Handle("/", h)
+	}
 
 	addr := cfg.ListenAddr
 	handler := logging.LoggingMiddleware(mux)

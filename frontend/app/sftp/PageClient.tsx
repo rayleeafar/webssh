@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { apiGet, apiPost, apiDelete, apiRequest, setCsrfToken } from '@/lib/api'
+
 
 interface FileInfo {
   name: string
@@ -13,7 +14,8 @@ interface FileInfo {
 }
 
 export default function SFTPPage() {
-  const params = useParams()
+  const searchParams = useSearchParams()
+  const nodeId = searchParams.get('nodeId') || ''
   const router = useRouter()
   const [files, setFiles] = useState<FileInfo[]>([])
   const [currentPath, setCurrentPath] = useState('.')
@@ -54,7 +56,7 @@ export default function SFTPPage() {
 
     try {
       const res = await apiGet(
-        `/api/sftp/list?nodeId=${params.nodeId}&path=${encodeURIComponent(path)}`
+        `/api/sftp/list?nodeId=${nodeId}&path=${encodeURIComponent(path)}`
       )
 
       if (res.status === 401) {
@@ -91,7 +93,7 @@ export default function SFTPPage() {
       const filePath = currentPath === '.' ? name : `${currentPath}/${name}`
 
       const res = await apiGet(
-        `/api/sftp/download?nodeId=${params.nodeId}&path=${encodeURIComponent(filePath)}`
+        `/api/sftp/download?nodeId=${nodeId}&path=${encodeURIComponent(filePath)}`
       )
 
       if (!res.ok) throw new Error('Download failed')
@@ -115,7 +117,7 @@ export default function SFTPPage() {
       const filePath = currentPath === '.' ? name : `${currentPath}/${name}`
 
       const res = await apiDelete(
-        `/api/sftp/delete?nodeId=${params.nodeId}&path=${encodeURIComponent(filePath)}`
+        `/api/sftp/delete?nodeId=${nodeId}&path=${encodeURIComponent(filePath)}`
       )
 
       if (!res.ok) throw new Error('Delete failed')
@@ -136,7 +138,7 @@ export default function SFTPPage() {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      formData.append('nodeId', params.nodeId as string)
+      formData.append('nodeId', nodeId as string)
       formData.append('path', currentPath === '.' ? file.name : `${currentPath}/${file.name}`)
 
       const res = await apiRequest('/api/sftp/upload', {
@@ -166,7 +168,7 @@ export default function SFTPPage() {
       const dirPath = currentPath === '.' ? newDirName : `${currentPath}/${newDirName}`
 
       const res = await apiPost('/api/sftp/mkdir', {
-        node_id: parseInt(params.nodeId as string),
+        node_id: parseInt(nodeId as string),
         path: dirPath,
       })
 
@@ -318,3 +320,4 @@ export default function SFTPPage() {
     </div>
   )
 }
+

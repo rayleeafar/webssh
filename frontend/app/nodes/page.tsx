@@ -269,13 +269,13 @@ export default function NodesPage() {
                   </div>
                   <div className="flex gap-2">
                     <a
-                      href={`/terminal/${node.id}`}
+                      href={`/terminal?nodeId=${node.id}`}
                       className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
                     >
                       Terminal
                     </a>
                     <a
-                      href={`/sftp/${node.id}`}
+                      href={`/sftp?nodeId=${node.id}`}
                       className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
                     >
                       SFTP

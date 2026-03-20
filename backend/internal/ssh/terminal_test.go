@@ -52,7 +52,7 @@ func TestHandleWebSocket_MissingNodeID(t *testing.T) {
 	h, svc := setupTerminalTestDB(t)
 	svc.Register("alice", "pass")
 	session, _ := svc.Login("alice", "pass")
-	user, _ := svc.ValidateSession(session.Token)
+	user, _ := svc.ValidateSession(session.Session.Token)
 
 	req := httptest.NewRequest(http.MethodGet, "/ws/terminal", nil)
 	req = requestWithUser(req, user)
@@ -68,7 +68,7 @@ func TestHandleWebSocket_InvalidNodeID(t *testing.T) {
 	h, svc := setupTerminalTestDB(t)
 	svc.Register("alice", "pass")
 	session, _ := svc.Login("alice", "pass")
-	user, _ := svc.ValidateSession(session.Token)
+	user, _ := svc.ValidateSession(session.Session.Token)
 
 	req := httptest.NewRequest(http.MethodGet, "/ws/terminal?nodeId=notanumber", nil)
 	req = requestWithUser(req, user)
@@ -84,7 +84,7 @@ func TestHandleWebSocket_NodeNotFound(t *testing.T) {
 	h, svc := setupTerminalTestDB(t)
 	svc.Register("alice", "pass")
 	session, _ := svc.Login("alice", "pass")
-	user, _ := svc.ValidateSession(session.Token)
+	user, _ := svc.ValidateSession(session.Session.Token)
 
 	req := httptest.NewRequest(http.MethodGet, "/ws/terminal?nodeId=99999", nil)
 	req = requestWithUser(req, user)
@@ -108,8 +108,8 @@ func TestHandleWebSocket_OwnershipViolation(t *testing.T) {
 	svc.Register("bob", "pass2")
 	sessionAlice, _ := svc.Login("alice", "pass1")
 	sessionBob, _ := svc.Login("bob", "pass2")
-	userAlice, _ := svc.ValidateSession(sessionAlice.Token)
-	userBob, _ := svc.ValidateSession(sessionBob.Token)
+	userAlice, _ := svc.ValidateSession(sessionAlice.Session.Token)
+	userBob, _ := svc.ValidateSession(sessionBob.Session.Token)
 
 	aliceKey, _ := base64.StdEncoding.DecodeString(userAlice.EncryptionKey)
 	encrypted, _ := cryptoutil.Encrypt("sshpass", aliceKey)
@@ -239,7 +239,7 @@ func TestHandleWebSocket_SSHDialFailure(t *testing.T) {
 
 	svc.Register("alice", "pass1")
 	session, _ := svc.Login("alice", "pass1")
-	user, _ := svc.ValidateSession(session.Token)
+	user, _ := svc.ValidateSession(session.Session.Token)
 
 	nodeID := insertNode(t, db, user, "127.0.0.1", 22)
 
@@ -252,7 +252,7 @@ func TestHandleWebSocket_SSHDialFailure(t *testing.T) {
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") +
 		"/ws/terminal?nodeId=" + intToStr(nodeID)
-	header := http.Header{"Cookie": []string{"session_token=" + session.Token}}
+	header := http.Header{"Cookie": []string{"session_token=" + session.Session.Token}}
 
 	conn, resp, dialErr := websocket.DefaultDialer.Dial(wsURL, header)
 	if dialErr != nil {
@@ -286,7 +286,7 @@ func TestHandleWebSocket_ResizePropagation(t *testing.T) {
 
 	svc.Register("alice", "pass1")
 	session, _ := svc.Login("alice", "pass1")
-	user, _ := svc.ValidateSession(session.Token)
+	user, _ := svc.ValidateSession(session.Session.Token)
 
 	nodeID := insertNode(t, db, user, "127.0.0.1", 22)
 
@@ -299,7 +299,7 @@ func TestHandleWebSocket_ResizePropagation(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws/terminal?nodeId=" + intToStr(nodeID)
-	header := http.Header{"Cookie": []string{"session_token=" + session.Token}}
+	header := http.Header{"Cookie": []string{"session_token=" + session.Session.Token}}
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
 	if err != nil {
@@ -350,8 +350,8 @@ func TestHandleWebSocket_ConcurrentSessions(t *testing.T) {
 	svc.Register("bob", "pass2")
 	sessAlice, _ := svc.Login("alice", "pass1")
 	sessBob, _ := svc.Login("bob", "pass2")
-	userAlice, _ := svc.ValidateSession(sessAlice.Token)
-	userBob, _ := svc.ValidateSession(sessBob.Token)
+	userAlice, _ := svc.ValidateSession(sessAlice.Session.Token)
+	userBob, _ := svc.ValidateSession(sessBob.Session.Token)
 
 	nodeAlice := insertNode(t, db, userAlice, "127.0.0.1", 22)
 	nodeBob := insertNode(t, db, userBob, "127.0.0.1", 22)
@@ -369,7 +369,7 @@ func TestHandleWebSocket_ConcurrentSessions(t *testing.T) {
 	baseURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws/terminal?nodeId="
 
 	// Connect Alice's session
-	hdrAlice := http.Header{"Cookie": []string{"session_token=" + sessAlice.Token}}
+	hdrAlice := http.Header{"Cookie": []string{"session_token=" + sessAlice.Session.Token}}
 	connAlice, _, err := websocket.DefaultDialer.Dial(baseURL+intToStr(nodeAlice), hdrAlice)
 	if err != nil {
 		t.Fatalf("Alice dial failed: %v", err)
@@ -377,7 +377,7 @@ func TestHandleWebSocket_ConcurrentSessions(t *testing.T) {
 	defer connAlice.Close()
 
 	// Connect Bob's session while Alice is still connected
-	hdrBob := http.Header{"Cookie": []string{"session_token=" + sessBob.Token}}
+	hdrBob := http.Header{"Cookie": []string{"session_token=" + sessBob.Session.Token}}
 	connBob, _, err := websocket.DefaultDialer.Dial(baseURL+intToStr(nodeBob), hdrBob)
 	if err != nil {
 		t.Fatalf("Bob dial failed: %v", err)

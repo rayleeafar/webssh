@@ -75,6 +75,16 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("failed to migrate sessions: %w", err)
 	}
 
+	// 4b. TOTP columns on users table
+	if err := migrateTOTP(db); err != nil {
+		return fmt.Errorf("failed to migrate totp: %w", err)
+	}
+
+	// 4c. Temp tokens for pending 2FA logins
+	if err := migrateTempTokens(db); err != nil {
+		return fmt.Errorf("failed to migrate temp_tokens: %w", err)
+	}
+
 	// 5. Node sysinfo cache table
 	if err := migrateNodeSysInfo(db); err != nil {
 		return fmt.Errorf("failed to migrate node_sysinfo: %w", err)
@@ -327,6 +337,41 @@ func migrateNodeSysInfo(db *sql.DB) error {
 			ip_addr TEXT NOT NULL DEFAULT '',
 			collected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+		)
+	`)
+	return err
+}
+
+func migrateTOTP(db *sql.DB) error {
+	cols := []struct{ name, def string }{
+		{"totp_secret", "TEXT NOT NULL DEFAULT ''"},
+		{"totp_enabled", "INTEGER NOT NULL DEFAULT 0"},
+	}
+	for _, col := range cols {
+		var count int
+		if err := db.QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info('users') WHERE name=?", col.name,
+		).Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			if _, err := db.Exec("ALTER TABLE users ADD COLUMN " + col.name + " " + col.def); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func migrateTempTokens(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS temp_tokens (
+			token TEXT PRIMARY KEY,
+			user_id INTEGER NOT NULL,
+			encrypted_key TEXT NOT NULL,
+			expires_at DATETIME NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 		)
 	`)
 	return err

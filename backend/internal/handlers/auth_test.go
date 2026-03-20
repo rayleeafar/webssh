@@ -205,7 +205,7 @@ func TestMeWithValidSession(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
-	req.AddCookie(&http.Cookie{Name: "session_token", Value: session.Token})
+	req.AddCookie(&http.Cookie{Name: "session_token", Value: session.Session.Token})
 	w := httptest.NewRecorder()
 
 	authMW(http.HandlerFunc(h.Me)).ServeHTTP(w, req)
@@ -241,8 +241,8 @@ func TestLogoutRevokesSession(t *testing.T) {
 
 	// Logout with correct CSRF token
 	logoutReq := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
-	logoutReq.AddCookie(&http.Cookie{Name: "session_token", Value: session.Token})
-	logoutReq.Header.Set("X-CSRF-Token", session.CSRFToken)
+	logoutReq.AddCookie(&http.Cookie{Name: "session_token", Value: session.Session.Token})
+	logoutReq.Header.Set("X-CSRF-Token", session.Session.CSRFToken)
 	logoutW := httptest.NewRecorder()
 
 	authMW(csrfMW(http.HandlerFunc(h.Logout))).ServeHTTP(logoutW, logoutReq)
@@ -253,7 +253,7 @@ func TestLogoutRevokesSession(t *testing.T) {
 
 	// Reusing the old session token must now be rejected
 	meReq := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
-	meReq.AddCookie(&http.Cookie{Name: "session_token", Value: session.Token})
+	meReq.AddCookie(&http.Cookie{Name: "session_token", Value: session.Session.Token})
 	meW := httptest.NewRecorder()
 
 	authMW(http.HandlerFunc(h.Me)).ServeHTTP(meW, meReq)
@@ -280,7 +280,7 @@ func TestCSRFRejectsInvalidToken(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/test", nil)
-	req.AddCookie(&http.Cookie{Name: "session_token", Value: session.Token})
+	req.AddCookie(&http.Cookie{Name: "session_token", Value: session.Session.Token})
 	req.Header.Set("X-CSRF-Token", "definitely-wrong-token")
 	w := httptest.NewRecorder()
 
@@ -303,7 +303,7 @@ func TestCSRFRejectsMissingToken(t *testing.T) {
 	session, _ := svc.Login("alice", "secret")
 
 	req := httptest.NewRequest(http.MethodPost, "/test", nil)
-	req.AddCookie(&http.Cookie{Name: "session_token", Value: session.Token})
+	req.AddCookie(&http.Cookie{Name: "session_token", Value: session.Session.Token})
 	// No X-CSRF-Token header
 	w := httptest.NewRecorder()
 
@@ -331,8 +331,8 @@ func TestCSRFAcceptsSessionBoundToken(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/test", nil)
-	req.AddCookie(&http.Cookie{Name: "session_token", Value: session.Token})
-	req.Header.Set("X-CSRF-Token", session.CSRFToken)
+	req.AddCookie(&http.Cookie{Name: "session_token", Value: session.Session.Token})
+	req.Header.Set("X-CSRF-Token", session.Session.CSRFToken)
 	w := httptest.NewRecorder()
 
 	authMW(csrfMW(handler)).ServeHTTP(w, req)
@@ -358,8 +358,8 @@ func TestCSRFTokenIsBoundToSession(t *testing.T) {
 	sessionB, _ := svc.Login("bob", "secret2")
 
 	req := httptest.NewRequest(http.MethodPost, "/test", nil)
-	req.AddCookie(&http.Cookie{Name: "session_token", Value: sessionB.Token})
-	req.Header.Set("X-CSRF-Token", sessionA.CSRFToken) // token from a different session
+	req.AddCookie(&http.Cookie{Name: "session_token", Value: sessionB.Session.Token})
+	req.Header.Set("X-CSRF-Token", sessionA.Session.CSRFToken) // token from a different session
 	w := httptest.NewRecorder()
 
 	authMW(csrfMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

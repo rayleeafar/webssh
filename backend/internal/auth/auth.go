@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pquerna/otp/totp"
 	"github.com/webssh/manager/internal/models"
 	"github.com/webssh/manager/pkg/crypto"
 	"golang.org/x/crypto/bcrypt"
@@ -19,6 +20,15 @@ type Service struct {
 
 func NewService(db *sql.DB, masterKey []byte) *Service {
 	return &Service{db: db, masterKey: masterKey}
+}
+
+// LoginResult is the discriminated result of a Login call.
+// If Requires2FA is true, TempToken is set and Session is nil.
+// Otherwise Session is set and TempToken is empty.
+type LoginResult struct {
+	Session     *models.Session
+	TempToken   string
+	Requires2FA bool
 }
 
 func (s *Service) Register(username, password string) (*models.User, error) {
@@ -53,12 +63,13 @@ func (s *Service) Register(username, password string) (*models.User, error) {
 	}, nil
 }
 
-func (s *Service) Login(username, password string) (*models.Session, error) {
+func (s *Service) Login(username, password string) (*LoginResult, error) {
 	var user models.User
+	var totpEnabled int
 	err := s.db.QueryRow(
-		"SELECT id, username, password_hash, encryption_key_salt FROM users WHERE username = ?",
+		"SELECT id, username, password_hash, encryption_key_salt, totp_enabled FROM users WHERE username = ?",
 		username,
-	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.EncryptionKeySalt)
+	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.EncryptionKeySalt, &totpEnabled)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("invalid credentials")
@@ -77,12 +88,25 @@ func (s *Service) Login(username, password string) (*models.Session, error) {
 	}
 	encryptionKeyB64 := base64.StdEncoding.EncodeToString(encryptionKey)
 
-	// Wrap the key with the server master key so DB contents alone cannot decrypt credentials
+	// Wrap the key with the server master key
 	wrappedKey, err := crypto.Encrypt(encryptionKeyB64, s.masterKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to wrap encryption key: %w", err)
 	}
 
+	// If 2FA is enabled, issue a short-lived temp token instead of a full session
+	if totpEnabled == 1 {
+		token, err := s.CreateTempToken(user.ID, wrappedKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create temp token: %w", err)
+		}
+		return &LoginResult{TempToken: token, Requires2FA: true}, nil
+	}
+
+	return s.createSession(user.ID, wrappedKey)
+}
+
+func (s *Service) createSession(userID int, wrappedKey string) (*LoginResult, error) {
 	token, err := generateToken()
 	if err != nil {
 		return nil, err
@@ -96,18 +120,20 @@ func (s *Service) Login(username, password string) (*models.Session, error) {
 	expiresAt := time.Now().Add(24 * time.Hour)
 	_, err = s.db.Exec(
 		"INSERT INTO sessions (token, user_id, encryption_key, csrf_token, expires_at) VALUES (?, ?, ?, ?, ?)",
-		token, user.ID, wrappedKey, csrfToken, expiresAt,
+		token, userID, wrappedKey, csrfToken, expiresAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
-	return &models.Session{
-		Token:     token,
-		CSRFToken: csrfToken,
-		UserID:    user.ID,
-		ExpiresAt: expiresAt,
-		CreatedAt: time.Now(),
+	return &LoginResult{
+		Session: &models.Session{
+			Token:     token,
+			CSRFToken: csrfToken,
+			UserID:    userID,
+			ExpiresAt: expiresAt,
+			CreatedAt: time.Now(),
+		},
 	}, nil
 }
 
@@ -129,7 +155,6 @@ func (s *Service) ValidateSession(token string) (*models.User, error) {
 		return nil, err
 	}
 
-	// Unwrap the encryption key using the server master key
 	encryptionKeyB64, err := crypto.Decrypt(wrappedKey, s.masterKey)
 	if err != nil {
 		return nil, fmt.Errorf("invalid or expired session")
@@ -142,6 +167,158 @@ func (s *Service) ValidateSession(token string) (*models.User, error) {
 func (s *Service) RevokeSession(token string) error {
 	_, err := s.db.Exec("DELETE FROM sessions WHERE token = ?", token)
 	return err
+}
+
+// --- TOTP methods ---
+
+// GenerateTOTPSecret generates a new TOTP key for the given user (by username lookup).
+// It does NOT store anything — storage happens in EnableTOTP after code confirmation.
+func (s *Service) GenerateTOTPSecret(userID int) (secret, otpauthURL string, err error) {
+	var username string
+	if err := s.db.QueryRow("SELECT username FROM users WHERE id = ?", userID).Scan(&username); err != nil {
+		return "", "", fmt.Errorf("user not found: %w", err)
+	}
+
+	key, err := totp.Generate(totp.GenerateOpts{
+		Issuer:      "WebSSH Manager",
+		AccountName: username,
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate TOTP key: %w", err)
+	}
+
+	return key.Secret(), key.URL(), nil
+}
+
+// EnableTOTP verifies the provided code against plaintextSecret and, if valid,
+// encrypts and stores the secret in the database with totp_enabled = 1.
+func (s *Service) EnableTOTP(userID int, plaintextSecret, code string) error {
+	if !totp.Validate(code, plaintextSecret) {
+		return fmt.Errorf("invalid TOTP code")
+	}
+
+	encryptedSecret, err := crypto.Encrypt(plaintextSecret, s.masterKey)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt TOTP secret: %w", err)
+	}
+
+	_, err = s.db.Exec(
+		"UPDATE users SET totp_secret = ?, totp_enabled = 1 WHERE id = ?",
+		encryptedSecret, userID,
+	)
+	return err
+}
+
+// DisableTOTP verifies the provided code and clears TOTP from the account.
+func (s *Service) DisableTOTP(userID int, code string) error {
+	var encryptedSecret string
+	if err := s.db.QueryRow(
+		"SELECT totp_secret FROM users WHERE id = ?", userID,
+	).Scan(&encryptedSecret); err != nil {
+		return fmt.Errorf("user not found: %w", err)
+	}
+
+	plaintextSecret, err := crypto.Decrypt(encryptedSecret, s.masterKey)
+	if err != nil {
+		return fmt.Errorf("failed to decrypt TOTP secret: %w", err)
+	}
+
+	if !totp.Validate(code, plaintextSecret) {
+		return fmt.Errorf("invalid TOTP code")
+	}
+
+	_, err = s.db.Exec(
+		"UPDATE users SET totp_secret = '', totp_enabled = 0 WHERE id = ?", userID,
+	)
+	return err
+}
+
+// ValidateTOTP checks the given code against the stored TOTP secret for the user.
+func (s *Service) ValidateTOTP(userID int, code string) error {
+	var encryptedSecret string
+	if err := s.db.QueryRow(
+		"SELECT totp_secret FROM users WHERE id = ?", userID,
+	).Scan(&encryptedSecret); err != nil {
+		return fmt.Errorf("user not found: %w", err)
+	}
+
+	plaintextSecret, err := crypto.Decrypt(encryptedSecret, s.masterKey)
+	if err != nil {
+		return fmt.Errorf("failed to decrypt TOTP secret: %w", err)
+	}
+
+	if !totp.Validate(code, plaintextSecret) {
+		return fmt.Errorf("invalid TOTP code")
+	}
+	return nil
+}
+
+// TOTPStatus returns whether 2FA is enabled for the given user.
+func (s *Service) TOTPStatus(userID int) (bool, error) {
+	var enabled int
+	err := s.db.QueryRow(
+		"SELECT totp_enabled FROM users WHERE id = ?", userID,
+	).Scan(&enabled)
+	if err != nil {
+		return false, err
+	}
+	return enabled == 1, nil
+}
+
+// CreateTempToken stores a short-lived token tied to a pre-authenticated user
+// (password verified but 2FA not yet confirmed). Expires in 5 minutes.
+func (s *Service) CreateTempToken(userID int, wrappedKey string) (string, error) {
+	token, err := generateToken()
+	if err != nil {
+		return "", err
+	}
+
+	expiresAt := time.Now().Add(5 * time.Minute)
+	_, err = s.db.Exec(
+		"INSERT INTO temp_tokens (token, user_id, encrypted_key, expires_at) VALUES (?, ?, ?, ?)",
+		token, userID, wrappedKey, expiresAt,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp token: %w", err)
+	}
+	return token, nil
+}
+
+// ConsumeTempToken atomically validates and deletes a temp token.
+// Returns the token data if valid and not expired.
+func (s *Service) ConsumeTempToken(token string) (*models.TempToken, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var tt models.TempToken
+	tt.Token = token
+	err = tx.QueryRow(
+		"SELECT user_id, encrypted_key, expires_at FROM temp_tokens WHERE token = ? AND expires_at > ?",
+		token, time.Now(),
+	).Scan(&tt.UserID, &tt.EncryptedKey, &tt.ExpiresAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("invalid or expired temp token")
+		}
+		return nil, err
+	}
+
+	if _, err := tx.Exec("DELETE FROM temp_tokens WHERE token = ?", token); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &tt, nil
+}
+
+// CompleteTOTPLogin creates a full session from a consumed temp token.
+func (s *Service) CompleteTOTPLogin(tt *models.TempToken) (*LoginResult, error) {
+	return s.createSession(tt.UserID, tt.EncryptedKey)
 }
 
 func generateToken() (string, error) {
