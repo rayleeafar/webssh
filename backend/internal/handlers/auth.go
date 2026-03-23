@@ -147,6 +147,31 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// WSTicket handles GET /api/auth/ws-ticket
+// Returns a 60-second HMAC-signed ticket for authenticating WebSocket connections
+// without relying on cookie delivery (which can be unreliable in some browsers).
+func (h *AuthHandler) WSTicket(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	ticket, err := h.authService.GenerateWSTicket(user.ID)
+	if err != nil {
+		http.Error(w, "Failed to generate ticket", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"ticket": ticket})
+}
+
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

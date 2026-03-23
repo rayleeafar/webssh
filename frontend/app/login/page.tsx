@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { apiPost, setCsrfToken } from '@/lib/api'
 
@@ -222,7 +223,7 @@ export default function LoginPage() {
             </button>
 
             <div style={{ textAlign: 'center', marginTop: 24 }}>
-              <a
+              <Link
                 href="/register"
                 style={{
                   fontSize: 12,
@@ -235,7 +236,7 @@ export default function LoginPage() {
                 onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = '#6070a0' }}
               >
                 No account? <span style={{ color: '#00ffff' }}>REGISTER</span>
-              </a>
+              </Link>
             </div>
           </form>
         ) : (

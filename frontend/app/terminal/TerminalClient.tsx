@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { apiGet, getWebSocketBase, setCsrfToken } from '@/lib/api'
+import { apiGet, getWebSocketBase, setCsrfToken, getWSTicket } from '@/lib/api'
 
 
 export default function TerminalClient() {
@@ -55,8 +55,9 @@ export default function TerminalClient() {
         fitAddon.fit()
       }
 
+      const ticket = await getWSTicket()
       const wsBase = getWebSocketBase()
-      ws = new WebSocket(`${wsBase}/ws/terminal?nodeId=${nodeId}`)
+      ws = new WebSocket(`${wsBase}/ws/terminal?nodeId=${nodeId}&ticket=${encodeURIComponent(ticket)}`)
       // Receive binary frames as ArrayBuffer so we can write synchronously
       // without an extra async Blob→ArrayBuffer conversion that can reorder writes.
       ws.binaryType = 'arraybuffer'

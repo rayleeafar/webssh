@@ -1,10 +1,15 @@
 package auth
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pquerna/otp/totp"
@@ -327,4 +332,83 @@ func generateToken() (string, error) {
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(b), nil
+}
+
+// --- WebSocket ticket ---
+//
+// A WS ticket is a short-lived (60 s) HMAC-signed token that lets the browser
+// authenticate a WebSocket upgrade without relying on cookie transmission,
+// which is unreliable in some browser / SameSite configurations.
+//
+// Format (before base64url): "<userID>:<unix_ts>:<hmac_hex>"
+// HMAC key  : server master key
+// HMAC input: "ws-ticket:<userID>:<unix_ts>"
+
+// GenerateWSTicket creates a 60-second single-origin ticket for the given user.
+func (s *Service) GenerateWSTicket(userID int) (string, error) {
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	uid := strconv.Itoa(userID)
+	mac := hmac.New(sha256.New, s.masterKey)
+	mac.Write([]byte("ws-ticket:" + uid + ":" + ts))
+	sig := hex.EncodeToString(mac.Sum(nil))
+	raw := uid + ":" + ts + ":" + sig
+	return base64.RawURLEncoding.EncodeToString([]byte(raw)), nil
+}
+
+// ValidateWSTicket verifies the ticket signature and expiry, then returns the
+// user loaded from their most-recent valid session (needed for the encryption key).
+func (s *Service) ValidateWSTicket(ticket string) (*models.User, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(ticket)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ticket encoding")
+	}
+
+	parts := strings.SplitN(string(decoded), ":", 3)
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("invalid ticket format")
+	}
+	uidStr, tsStr, sig := parts[0], parts[1], parts[2]
+
+	userID, err := strconv.Atoi(uidStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ticket user")
+	}
+	ts, err := strconv.ParseInt(tsStr, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ticket timestamp")
+	}
+	if time.Now().Unix()-ts > 60 {
+		return nil, fmt.Errorf("ticket expired")
+	}
+
+	mac := hmac.New(sha256.New, s.masterKey)
+	mac.Write([]byte("ws-ticket:" + uidStr + ":" + tsStr))
+	expectedSig := hex.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(sig), []byte(expectedSig)) {
+		return nil, fmt.Errorf("invalid ticket signature")
+	}
+
+	// Load the user + encryption key from their most recent valid session.
+	var user models.User
+	var wrappedKey string
+	err = s.db.QueryRow(`
+		SELECT u.id, u.username, u.encryption_key_salt, s.encryption_key, s.csrf_token
+		FROM users u
+		JOIN sessions s ON u.id = s.user_id
+		WHERE u.id = ? AND s.expires_at > ?
+		ORDER BY s.created_at DESC
+		LIMIT 1
+	`, userID, time.Now()).Scan(
+		&user.ID, &user.Username, &user.EncryptionKeySalt, &wrappedKey, &user.CSRFToken,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("no valid session for ticket user")
+	}
+
+	encryptionKeyB64, err := crypto.Decrypt(wrappedKey, s.masterKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt user key")
+	}
+	user.EncryptionKey = encryptionKeyB64
+	return &user, nil
 }

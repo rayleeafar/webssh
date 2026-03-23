@@ -16,20 +16,26 @@ const UserContextKey contextKey = "user"
 func AuthMiddleware(authService *auth.Service) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token := extractToken(r)
-			if token == "" {
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
+			// Primary: session cookie or Bearer token
+			if token := extractToken(r); token != "" {
+				if user, err := authService.ValidateSession(token); err == nil {
+					ctx := context.WithValue(r.Context(), UserContextKey, user)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
 			}
 
-			user, err := authService.ValidateSession(token)
-			if err != nil {
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
+			// Fallback: short-lived WS ticket in query param (used by WebSocket
+			// connections where cookie delivery is unreliable in some browsers).
+			if ticket := r.URL.Query().Get("ticket"); ticket != "" {
+				if user, err := authService.ValidateWSTicket(ticket); err == nil {
+					ctx := context.WithValue(r.Context(), UserContextKey, user)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
 			}
 
-			ctx := context.WithValue(r.Context(), UserContextKey, user)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		})
 	}
 }

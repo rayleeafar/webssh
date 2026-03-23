@@ -92,6 +92,18 @@ export async function apiDelete(url: string): Promise<Response> {
 }
 
 /**
+ * Request a short-lived (60 s) WebSocket authentication ticket.
+ * Use this instead of the session cookie for WebSocket connections,
+ * as cookie delivery during WS upgrades is unreliable in some browsers.
+ */
+export async function getWSTicket(): Promise<string> {
+  const res = await apiGet('/api/auth/ws-ticket')
+  if (!res.ok) throw new Error('Failed to get WebSocket ticket')
+  const data = await res.json()
+  return data.ticket as string
+}
+
+/**
  * Derive the WebSocket base URL.
  *
  * Priority order:

@@ -87,6 +87,7 @@ func main() {
 	mux.HandleFunc("/api/auth/login", authHandler.Login)
 	mux.Handle("/api/auth/logout", authMiddleware(csrfMiddleware(http.HandlerFunc(authHandler.Logout))))
 	mux.Handle("/api/auth/me", authMiddleware(http.HandlerFunc(authHandler.Me)))
+	mux.Handle("/api/auth/ws-ticket", authMiddleware(http.HandlerFunc(authHandler.WSTicket)))
 
 	// 2FA endpoints
 	mux.Handle("/api/auth/2fa/setup", authMiddleware(http.HandlerFunc(totpHandler.SetupTOTP)))

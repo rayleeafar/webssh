@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react'
 import { Terminal } from 'xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import 'xterm/css/xterm.css'
-import { apiGet, getWebSocketBase, setCsrfToken } from '@/lib/api'
+import { apiGet, getWebSocketBase, setCsrfToken, getWSTicket } from '@/lib/api'
 
 interface TerminalPaneProps {
   nodeId: number
@@ -83,8 +83,9 @@ export default function TerminalPane({ nodeId, active }: TerminalPaneProps) {
         })
       }
 
+      const ticket = await getWSTicket()
       const wsBase = getWebSocketBase()
-      const ws = new WebSocket(`${wsBase}/ws/terminal?nodeId=${nodeId}`)
+      const ws = new WebSocket(`${wsBase}/ws/terminal?nodeId=${nodeId}&ticket=${encodeURIComponent(ticket)}`)
       ws.binaryType = 'arraybuffer'
       wsRef.current = ws
 
