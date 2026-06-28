@@ -8,9 +8,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"sync"
 
+	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
 	"github.com/webssh/manager/internal/auth"
 	"github.com/webssh/manager/internal/middleware"
@@ -121,6 +123,75 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 
 	if ownerID != user.ID {
 		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	if host == "localhost-shell" {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			log.Printf("WebSocket upgrade failed: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		shell := os.Getenv("SHELL")
+		if shell == "" {
+			shell = "/bin/sh"
+		}
+		cmd := exec.Command(shell)
+
+		f, err := pty.Start(cmd)
+		if err != nil {
+			conn.WriteMessage(websocket.TextMessage, []byte("Failed to start local shell: "+err.Error()+"\r\n"))
+			return
+		}
+		defer f.Close()
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		// Read from WebSocket, write to PTY
+		go func() {
+			defer wg.Done()
+			for {
+				_, msg, err := conn.ReadMessage()
+				if err != nil {
+					cmd.Process.Kill()
+					return
+				}
+
+				if len(msg) > 0 && msg[0] == 0 {
+					if len(msg) >= 5 {
+						rows := uint16(msg[1])<<8 | uint16(msg[2])
+						cols := uint16(msg[3])<<8 | uint16(msg[4])
+						pty.Setsize(f, &pty.Winsize{Rows: rows, Cols: cols})
+					}
+					continue
+				}
+
+				if _, err := f.Write(msg); err != nil {
+					return
+				}
+			}
+		}()
+
+		// Read from PTY, write to WebSocket
+		go func() {
+			defer wg.Done()
+			buf := make([]byte, 1024)
+			for {
+				n, err := f.Read(buf)
+				if err != nil {
+					return
+				}
+				if err := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); err != nil {
+					return
+				}
+			}
+		}()
+
+		wg.Wait()
+		cmd.Wait()
 		return
 	}
 

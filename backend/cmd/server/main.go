@@ -1,9 +1,11 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
 	"log"
+	"math/big"
 	"net/http"
 	"strings"
 
@@ -17,6 +19,20 @@ import (
 	"github.com/webssh/manager/internal/ssh"
 	"github.com/webssh/manager/internal/static"
 )
+
+// generateRandomPassword generates a cryptographically secure random password of specified length.
+func generateRandomPassword(length int) (string, error) {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
+	result := make([]byte, length)
+	for i := range result {
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return "", err
+		}
+		result[i] = charset[num.Int64()]
+	}
+	return string(result), nil
+}
 
 // deriveMasterKey converts the MASTER_SECRET env string into a 32-byte AES key.
 // Returns an error if secret is empty so callers can fail fast.
@@ -65,6 +81,54 @@ func main() {
 	}
 
 	authService := auth.NewService(db, masterKey)
+
+	// Create default admin account and default local terminal node if database is empty
+	var userCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM users").Scan(&userCount)
+	if err != nil {
+		log.Fatalf("Failed to query user count: %v", err)
+	}
+	if userCount == 0 {
+		adminUsername := "Trayadmin"
+		adminPassword, err := generateRandomPassword(16)
+		if err != nil {
+			log.Fatalf("Failed to generate random password: %v", err)
+		}
+
+		adminUser, err := authService.Register(adminUsername, adminPassword)
+		if err != nil {
+			log.Fatalf("Failed to register default admin: %v", err)
+		}
+
+		fmt.Printf("\n==================================================\n")
+		fmt.Printf("DEFAULT ADMIN ACCOUNT CREATED:\n")
+		fmt.Printf("Username: %s\n", adminUsername)
+		fmt.Printf("Password: %s\n", adminPassword)
+		fmt.Printf("==================================================\n\n")
+
+		// Create a dummy credential for the local terminal node
+		res, err := db.Exec(
+			"INSERT INTO credentials (user_id, auth_type, encrypted_value) VALUES (?, 'password', '')",
+			adminUser.ID,
+		)
+		if err != nil {
+			log.Fatalf("Failed to create dummy credential: %v", err)
+		}
+		credID, err := res.LastInsertId()
+		if err != nil {
+			log.Fatalf("Failed to get dummy credential ID: %v", err)
+		}
+
+		// Create the default local terminal node
+		_, err = db.Exec(
+			`INSERT INTO nodes (user_id, name, host, port, username, credential_id) 
+			 VALUES (?, 'Local Terminal', 'localhost-shell', 0, 'local', ?)`,
+			adminUser.ID, credID,
+		)
+		if err != nil {
+			log.Fatalf("Failed to create default local node: %v", err)
+		}
+	}
 	authHandler := handlers.NewAuthHandler(authService, cfg.EnableTLS)
 	totpHandler := handlers.NewTOTPHandler(authService, cfg.EnableTLS)
 	nodeHandler := handlers.NewNodeHandler(db)
