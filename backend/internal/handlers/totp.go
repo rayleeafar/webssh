@@ -199,5 +199,6 @@ func (h *TOTPHandler) VerifyTOTP(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"user_id":    session.UserID,
 		"csrf_token": session.CSRFToken,
+		"token":      session.Token,
 	})
 }
