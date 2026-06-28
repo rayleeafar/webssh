@@ -6,9 +6,18 @@ import { useRouter } from 'next/navigation'
 interface HeaderProps {
   user: { username: string } | null
   onLogout?: () => void
+  isMobile?: boolean
+  sidebarOpen?: boolean
+  onToggleSidebar?: () => void
 }
 
-export default function Header({ user, onLogout }: HeaderProps) {
+export default function Header({
+  user,
+  onLogout,
+  isMobile = false,
+  sidebarOpen = false,
+  onToggleSidebar,
+}: HeaderProps) {
   const router = useRouter()
 
   const handleLogout = async () => {
@@ -28,7 +37,7 @@ export default function Header({ user, onLogout }: HeaderProps) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '0 20px',
+        padding: isMobile ? '0 10px' : '0 20px',
         background: 'rgba(8,8,16,0.98)',
         borderBottom: '1px solid rgba(0,255,255,0.15)',
         flexShrink: 0,
@@ -37,7 +46,27 @@ export default function Header({ user, onLogout }: HeaderProps) {
       }}
     >
       {/* Left: Logo */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {isMobile && onToggleSidebar && (
+          <button
+            onClick={onToggleSidebar}
+            style={{
+              background: 'transparent',
+              border: '1px solid rgba(0,255,255,0.3)',
+              color: '#00ffff',
+              fontFamily: "'Orbitron', sans-serif",
+              fontSize: 12,
+              padding: '2px 8px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: 24,
+            }}
+          >
+            {sidebarOpen ? '✕' : '☰'}
+          </button>
+        )}
         <span
           style={{
             color: '#00ffff',
@@ -58,13 +87,13 @@ export default function Header({ user, onLogout }: HeaderProps) {
             textShadow: '0 0 12px rgba(0,255,255,0.6)',
           }}
         >
-          WEBSSH MANAGER
+          {isMobile ? 'WEBSSH' : 'WEBSSH MANAGER'}
         </span>
       </div>
 
       {/* Right: User info + settings + logout */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-        {user && (
+      <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 16 }}>
+        {user && !isMobile && (
           <span
             style={{
               fontFamily: "'Orbitron', sans-serif",
@@ -84,7 +113,7 @@ export default function Header({ user, onLogout }: HeaderProps) {
             letterSpacing: '0.2em',
             color: '#6070a0',
             textDecoration: 'none',
-            padding: '4px 12px',
+            padding: '4px 8px',
             border: '1px solid rgba(0,255,255,0.25)',
             transition: 'color 0.2s, border-color 0.2s',
           }}
@@ -97,7 +126,7 @@ export default function Header({ user, onLogout }: HeaderProps) {
             e.currentTarget.style.borderColor = 'rgba(0,255,255,0.25)'
           }}
         >
-          SETTINGS
+          {isMobile ? 'SETUP' : 'SETTINGS'}
         </a>
         <button
           onClick={handleLogout}
@@ -108,7 +137,7 @@ export default function Header({ user, onLogout }: HeaderProps) {
             fontFamily: "'Orbitron', sans-serif",
             fontSize: 10,
             letterSpacing: '0.2em',
-            padding: '4px 12px',
+            padding: '4px 8px',
             cursor: 'pointer',
             transition: 'color 0.2s, border-color 0.2s, box-shadow 0.2s',
           }}
@@ -125,7 +154,7 @@ export default function Header({ user, onLogout }: HeaderProps) {
             t.style.boxShadow = 'none'
           }}
         >
-          LOGOUT
+          {isMobile ? 'EXIT' : 'LOGOUT'}
         </button>
       </div>
 

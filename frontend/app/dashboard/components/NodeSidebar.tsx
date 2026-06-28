@@ -18,6 +18,8 @@ interface NodeSidebarProps {
   onAddNode: () => void
   onEditNode: (node: Node) => void
   onDeleteNode: (id: number) => void
+  isMobile?: boolean
+  onCloseMobileSidebar?: () => void
 }
 
 export default function NodeSidebar({
@@ -27,13 +29,20 @@ export default function NodeSidebar({
   onAddNode,
   onEditNode,
   onDeleteNode,
+  isMobile = false,
+  onCloseMobileSidebar,
 }: NodeSidebarProps) {
   const [hoveredId, setHoveredId] = useState<number | null>(null)
 
   return (
     <div
       style={{
-        width: 280,
+        width: isMobile ? '100%' : 280,
+        position: isMobile ? 'absolute' : 'relative',
+        left: 0,
+        top: 0,
+        bottom: 0,
+        zIndex: 30,
         flexShrink: 0,
         background: '#0a0a14',
         borderRight: '1px solid rgba(0,255,255,0.12)',
@@ -53,16 +62,35 @@ export default function NodeSidebar({
           flexShrink: 0,
         }}
       >
-        <span
-          style={{
-            fontFamily: "'Orbitron', sans-serif",
-            fontSize: 10,
-            letterSpacing: '0.3em',
-            color: '#6070a0',
-          }}
-        >
-          NODES
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {isMobile && onCloseMobileSidebar && (
+            <button
+              onClick={onCloseMobileSidebar}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#6070a0',
+                cursor: 'pointer',
+                fontSize: 16,
+                padding: '0 4px',
+                display: 'flex',
+                alignItems: 'center',
+              }}
+            >
+              ←
+            </button>
+          )}
+          <span
+            style={{
+              fontFamily: "'Orbitron', sans-serif",
+              fontSize: 10,
+              letterSpacing: '0.3em',
+              color: '#6070a0',
+            }}
+          >
+            NODES
+          </span>
+        </div>
         <span
           style={{
             background: 'rgba(0,255,255,0.12)',

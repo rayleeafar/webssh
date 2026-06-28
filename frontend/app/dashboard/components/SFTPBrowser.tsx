@@ -337,6 +337,7 @@ export default function SFTPBrowser({ nodeId }: SFTPBrowserProps) {
                 {['NAME', 'MODE', 'SIZE', 'MODIFIED', 'ACTIONS'].map((col) => (
                   <th
                     key={col}
+                    className={col === 'MODE' || col === 'MODIFIED' ? 'mobile-hide' : ''}
                     style={{
                       padding: '6px 12px',
                       textAlign: 'left',
@@ -368,9 +369,9 @@ export default function SFTPBrowser({ nodeId }: SFTPBrowserProps) {
                   <td style={{ padding: '6px 12px', color: '#00ffff' }}>
                     <span style={{ marginRight: 6, opacity: 0.7 }}>▶</span>..
                   </td>
+                  <td className="mobile-hide" style={{ padding: '6px 12px', color: '#303060' }}>-</td>
                   <td style={{ padding: '6px 12px', color: '#303060' }}>-</td>
-                  <td style={{ padding: '6px 12px', color: '#303060' }}>-</td>
-                  <td style={{ padding: '6px 12px', color: '#303060' }}>-</td>
+                  <td className="mobile-hide" style={{ padding: '6px 12px', color: '#303060' }}>-</td>
                   <td style={{ padding: '6px 12px' }} />
                 </tr>
               )}
@@ -402,6 +403,7 @@ export default function SFTPBrowser({ nodeId }: SFTPBrowserProps) {
                     {file.name}
                   </td>
                   <td
+                    className="mobile-hide"
                     style={{
                       padding: '6px 12px',
                       fontFamily: "'JetBrains Mono', monospace",
@@ -422,6 +424,7 @@ export default function SFTPBrowser({ nodeId }: SFTPBrowserProps) {
                     {file.is_dir ? '-' : formatSize(file.size)}
                   </td>
                   <td
+                    className="mobile-hide"
                     style={{
                       padding: '6px 12px',
                       fontSize: 11,

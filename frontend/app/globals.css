@@ -167,3 +167,22 @@ body {
 .xterm-viewport {
   overflow-y: auto !important;
 }
+
+/* ── Responsive Mobile Utilities ─────────────────── */
+@media (max-width: 768px) {
+  .mobile-hide {
+    display: none !important;
+  }
+  
+  .batch-container {
+    flex-direction: column !important;
+  }
+  
+  .batch-sidebar {
+    width: 100% !important;
+    height: 140px !important;
+    border-right: none !important;
+    border-bottom: 1px solid rgba(157,78,221,0.15) !important;
+  }
+}
+

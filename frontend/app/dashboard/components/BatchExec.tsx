@@ -101,9 +101,10 @@ export default function BatchExec({ nodes }: Props) {
   }
 
   return (
-    <div style={{ display: 'flex', height: '100%', color: '#e0e0e0', fontSize: 13 }}>
+    <div className="batch-container" style={{ display: 'flex', height: '100%', color: '#e0e0e0', fontSize: 13 }}>
       {/* Left: node selector */}
       <div
+        className="batch-sidebar"
         style={{
           width: 220,
           flexShrink: 0,

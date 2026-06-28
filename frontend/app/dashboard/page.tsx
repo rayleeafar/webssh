@@ -44,7 +44,25 @@ export default function DashboardPage() {
   const [showNodeModal, setShowNodeModal] = useState(false)
   const [editingNode, setEditingNode] = useState<Node | null>(null)
   const [user, setUser] = useState<{ username: string } | null>(null)
+  const [isMobile, setIsMobile] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const router = useRouter()
+
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768
+      setIsMobile(mobile)
+      if (mobile) {
+        // Close sidebar on mobile if there are active tabs
+        setSidebarOpen(tabs.length === 0)
+      } else {
+        setSidebarOpen(true)
+      }
+    }
+    handleResize()
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [tabs.length])
 
   const fetchNodes = useCallback(async () => {
     try {
@@ -86,7 +104,10 @@ export default function DashboardPage() {
     const newTabId = crypto.randomUUID()
     setTabs(prev => [...prev, { id: newTabId, nodeId: node.id, nodeName: node.name, host: node.host }])
     setActiveTabId(newTabId)
-  }, [])
+    if (isMobile) {
+      setSidebarOpen(false)
+    }
+  }, [isMobile])
 
   const closeTab = useCallback((tabId: string) => {
     setTabs((prev) => {
@@ -94,14 +115,17 @@ export default function DashboardPage() {
       const next = prev.filter((t) => t.id !== tabId)
       setActiveTabId((cur) => {
         if (cur !== tabId) return cur
-        if (next.length === 0) return null
+        if (next.length === 0) {
+          if (isMobile) setSidebarOpen(true)
+          return null
+        }
         // activate adjacent tab
         const newIdx = Math.min(idx, next.length - 1)
         return next[newIdx].id
       })
       return next
     })
-  }, [])
+  }, [isMobile])
 
   const handleDeleteNode = useCallback(
     async (id: number) => {
@@ -141,24 +165,33 @@ export default function DashboardPage() {
         overflow: 'hidden',
       }}
     >
-      <Header user={user} />
+      <Header
+        user={user}
+        isMobile={isMobile}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={() => setSidebarOpen(prev => !prev)}
+      />
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
         {/* Sidebar */}
-        <NodeSidebar
-          nodes={nodes}
-          activeNodeIds={activeNodeIds}
-          onNodeClick={openTab}
-          onAddNode={() => {
-            setEditingNode(null)
-            setShowNodeModal(true)
-          }}
-          onEditNode={(node) => {
-            setEditingNode(node)
-            setShowNodeModal(true)
-          }}
-          onDeleteNode={handleDeleteNode}
-        />
+        {(!isMobile || sidebarOpen) && (
+          <NodeSidebar
+            nodes={nodes}
+            activeNodeIds={activeNodeIds}
+            onNodeClick={openTab}
+            onAddNode={() => {
+              setEditingNode(null)
+              setShowNodeModal(true)
+            }}
+            onEditNode={(node) => {
+              setEditingNode(node)
+              setShowNodeModal(true)
+            }}
+            onDeleteNode={handleDeleteNode}
+            isMobile={isMobile}
+            onCloseMobileSidebar={() => setSidebarOpen(false)}
+          />
+        )}
 
         {/* Main content */}
         <div
