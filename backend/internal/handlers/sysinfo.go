@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os/exec"
 	"strconv"
 	"strings"
 
@@ -102,11 +103,79 @@ func collectSysInfo(client *gossh.Client) (*SysInfoResponse, error) {
 	return info, nil
 }
 
+// collectLocalSysInfo executes the sysInfoShellCmd locally on the server.
+func collectLocalSysInfo() (*SysInfoResponse, error) {
+	cmd := exec.Command("/bin/sh", "-c", sysInfoShellCmd)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("run local sysinfo command: %w", err)
+	}
+
+	info := &SysInfoResponse{}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Handle lines with multiple KEY=VALUE pairs (e.g. "MEM_TOTAL=X MEM_USED=Y")
+		if strings.Contains(line, " ") && strings.Contains(line, "=") {
+			tokens := strings.Fields(line)
+			allKV := true
+			for _, t := range tokens {
+				if !strings.Contains(t, "=") {
+					allKV = false
+					break
+				}
+			}
+			if allKV {
+				for _, t := range tokens {
+					kv := strings.SplitN(t, "=", 2)
+					if len(kv) == 2 {
+						parseSysInfoKV(info, kv[0], kv[1])
+					}
+				}
+				continue
+			}
+		}
+
+		kv := strings.SplitN(line, "=", 2)
+		if len(kv) == 2 {
+			parseSysInfoKV(info, strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1]))
+		}
+	}
+
+	return info, nil
+}
+
 // collectAndStoreSysInfo connects to the node described by routing, collects
 // system info, and persists it to the node_sysinfo table. Intended to be
 // called asynchronously after node creation. Errors are logged and silently
 // ignored.
 func collectAndStoreSysInfo(db *sql.DB, nodeID int, routing *nodeSSHRouting) {
+	if routing.DialConfig.TargetHost == "localhost-shell" {
+		info, err := collectLocalSysInfo()
+		if err != nil {
+			log.Printf("sysinfo collect node %d (local): %v", nodeID, err)
+			return
+		}
+		if _, err := db.Exec(`
+			INSERT OR REPLACE INTO node_sysinfo
+				(node_id, hostname, os, kernel, uptime, cpu_model, cpu_cores, load_avg,
+				 mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr, collected_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+			nodeID,
+			info.Hostname, info.OS, info.Kernel, info.Uptime,
+			info.CPUModel, info.CPUCores, info.LoadAvg,
+			info.MemTotal, info.MemUsed,
+			info.DiskTotal, info.DiskUsed, info.DiskPct,
+			info.IPAddr,
+		); err != nil {
+			log.Printf("sysinfo collect node %d (local): persist: %v", nodeID, err)
+		}
+		return
+	}
+
 	client, err := dialNodeSSH(routing)
 	if err != nil {
 		log.Printf("sysinfo collect node %d: dial: %v", nodeID, err)
@@ -163,7 +232,8 @@ func (h *SysInfoHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// Verify the node exists and belongs to the authenticated user before
 	// loading any cached data or attempting an SSH refresh.
 	var ownerID int
-	if err := h.db.QueryRow("SELECT user_id FROM nodes WHERE id = ?", nodeID).Scan(&ownerID); err == sql.ErrNoRows {
+	var host string
+	if err := h.db.QueryRow("SELECT user_id, host FROM nodes WHERE id = ?", nodeID).Scan(&ownerID, &host); err == sql.ErrNoRows {
 		http.Error(w, "Node not found", http.StatusNotFound)
 		return
 	} else if err != nil {
@@ -191,6 +261,41 @@ func (h *SysInfoHandler) Get(w http.ResponseWriter, r *http.Request) {
 	)
 	if scanErr == nil {
 		cached = &cachedRow
+	}
+
+	if host == "localhost-shell" {
+		info, err := collectLocalSysInfo()
+		if err != nil {
+			if cached != nil {
+				cached.Stale = true
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(cached) //nolint:errcheck
+				return
+			}
+			http.Error(w, "Local sysinfo collection failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Persist refreshed data.
+		_, dbErr := h.db.Exec(`
+			INSERT OR REPLACE INTO node_sysinfo
+				(node_id, hostname, os, kernel, uptime, cpu_model, cpu_cores, load_avg,
+				 mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr, collected_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+			nodeID,
+			info.Hostname, info.OS, info.Kernel, info.Uptime,
+			info.CPUModel, info.CPUCores, info.LoadAvg,
+			info.MemTotal, info.MemUsed,
+			info.DiskTotal, info.DiskUsed, info.DiskPct,
+			info.IPAddr,
+		)
+		if dbErr != nil {
+			log.Printf("sysinfo Get (local): persist refreshed sysinfo for node %d: %v", nodeID, dbErr)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(info) //nolint:errcheck
+		return
 	}
 
 	key, err := base64.StdEncoding.DecodeString(user.EncryptionKey)

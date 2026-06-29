@@ -56,6 +56,64 @@ func (r *realSFTPClient) Remove(path string) error              { return r.c.Rem
 func (r *realSFTPClient) RemoveDirectory(path string) error     { return r.c.RemoveDirectory(path) }
 func (r *realSFTPClient) Mkdir(path string) error               { return r.c.Mkdir(path) }
 
+// localSFTPClient implements sftpClientIF for local filesystem operations.
+type localSFTPClient struct{}
+
+func (l *localSFTPClient) ReadDir(p string) ([]os.FileInfo, error) {
+	entries, err := os.ReadDir(p)
+	if err != nil {
+		return nil, err
+	}
+	var infos []os.FileInfo
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err == nil {
+			infos = append(infos, info)
+		}
+	}
+	return infos, nil
+}
+
+type localReadFile struct {
+	*os.File
+}
+
+func (l *localReadFile) Stat() (os.FileInfo, error) {
+	return l.File.Stat()
+}
+
+func (l *localSFTPClient) Open(path string) (sftpReadFile, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	return &localReadFile{File: f}, nil
+}
+
+func (l *localSFTPClient) Create(path string) (sftpWriteFile, error) {
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+func (l *localSFTPClient) Stat(p string) (os.FileInfo, error) {
+	return os.Stat(p)
+}
+
+func (l *localSFTPClient) Remove(path string) error {
+	return os.Remove(path)
+}
+
+func (l *localSFTPClient) RemoveDirectory(path string) error {
+	return os.Remove(path)
+}
+
+func (l *localSFTPClient) Mkdir(path string) error {
+	return os.Mkdir(path, 0755)
+}
+
 // sftpClientFactory is the injectable function for obtaining an SFTP client.
 // Tests replace this with a factory that returns an in-memory fake.
 type sftpClientFactory func(nodeID, userID int, encryptionKey string) (sftpClientIF, func(), error)
@@ -360,6 +418,10 @@ func (h *SFTPHandler) getSFTPClient(nodeID, userID int, encryptionKey string) (s
 
 	if ownerID != userID {
 		return nil, nil, fmt.Errorf("forbidden")
+	}
+
+	if host == "localhost-shell" {
+		return &localSFTPClient{}, func() {}, nil
 	}
 
 	// Decode the encryption key from the session
