@@ -94,6 +94,26 @@ export default function DashboardPage() {
           if (me.username) setUser({ username: me.username })
         }
         await fetchNodes()
+
+        // Fetch active terminal sessions from backend and restore tabs
+        try {
+          const sessionsRes = await apiGet('/api/terminal/sessions')
+          if (sessionsRes.ok) {
+            const activeSessions = await sessionsRes.json()
+            if (Array.isArray(activeSessions) && activeSessions.length > 0) {
+              const restoredTabs = activeSessions.map((s: any) => ({
+                id: s.id,
+                nodeId: s.nodeId,
+                nodeName: s.nodeName,
+                host: s.host,
+              }))
+              setTabs(restoredTabs)
+              setActiveTabId(restoredTabs[0].id)
+            }
+          }
+        } catch (e) {
+          console.error('Failed to restore active terminal sessions:', e)
+        }
       } catch {
         router.push('/login')
       }

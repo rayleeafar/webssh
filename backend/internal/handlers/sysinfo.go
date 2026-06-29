@@ -42,27 +42,56 @@ type SysInfoResponse struct {
 }
 
 // sysInfoShellCmd is the shell command used to collect system information remotely.
-const sysInfoShellCmd = `echo "HOSTNAME=$(hostname)" && ` +
-	`echo "OS=$(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '"' || uname -s)" && ` +
-	`echo "KERNEL=$(uname -r)" && ` +
-	`echo "UPTIME=$(uptime -p 2>/dev/null || uptime)" && ` +
-	`echo "CPU=$(cat /proc/cpuinfo 2>/dev/null | grep 'model name' | head -1 | cut -d: -f2 | xargs || sysctl -n machdep.cpu.brand_string 2>/dev/null || echo unknown)" && ` +
-	`echo "CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 0)" && ` +
-	`echo "LOAD=$(cat /proc/loadavg 2>/dev/null | awk '{print $1" "$2" "$3}' || sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | xargs || echo 0)" && ` +
+const sysInfoShellCmd = `HOSTNAME=$(hostname) && ` +
+	`OS="" && if [ -f /etc/os-release ]; then OS=$(cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2 | tr -d '"'); fi && ` +
+	`if [ -z "$OS" ]; then OS=$(uname -s); fi && ` +
+	`KERNEL=$(uname -r) && ` +
+	`UPTIME=$(uptime -p 2>/dev/null || uptime) && ` +
+	`CPU="" && if [ -f /proc/cpuinfo ]; then CPU=$(cat /proc/cpuinfo | grep 'model name' | head -1 | cut -d: -f2 | xargs); fi && ` +
+	`if [ -z "$CPU" ]; then CPU=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo unknown); fi && ` +
+	`CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 0) && ` +
+	`LOAD="" && if [ -f /proc/loadavg ]; then LOAD=$(cat /proc/loadavg | awk '{print $1" "$2" "$3}'); fi && ` +
+	`if [ -z "$LOAD" ]; then LOAD=$(sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | xargs || echo 0); fi && ` +
 	`if [ "$(uname)" = "Darwin" ]; then ` +
-	`MEM_TOTAL=$(($(sysctl -n hw.memsize) / 1024 / 1024)) && ` +
-	`PAGESIZE=$(sysctl -n hw.pagesize) && ` +
-	`FREE_PAGES=$(vm_stat | grep "Pages free:" | awk '{print $3}' | tr -d '.') && ` +
-	`SPEC_PAGES=$(vm_stat | grep "Pages speculative:" | awk '{print $3}' | tr -d '.') && ` +
-	`FREE_MEM=$((($FREE_PAGES + $SPEC_PAGES) * $PAGESIZE / 1024 / 1024)) && ` +
-	`MEM_USED=$(($MEM_TOTAL - $FREE_MEM)) && ` +
-	`echo "MEM_TOTAL=$MEM_TOTAL MEM_USED=$MEM_USED"; ` +
+	`  MEM_TOTAL=$(($(sysctl -n hw.memsize) / 1024 / 1024)) && ` +
+	`  PAGESIZE=$(sysctl -n hw.pagesize) && ` +
+	`  FREE_PAGES=$(vm_stat | grep "Pages free:" | awk '{print $3}' | tr -d '.') && ` +
+	`  SPEC_PAGES=$(vm_stat | grep "Pages speculative:" | awk '{print $3}' | tr -d '.') && \` +
+	`  INACTIVE_PAGES=$(vm_stat | grep "Pages inactive:" | awk '{print $3}' | tr -d '.') && ` +
+	`  FREE_MEM=$((($FREE_PAGES + $SPEC_PAGES + $INACTIVE_PAGES) * $PAGESIZE / 1024 / 1024)) && ` +
+	`  MEM_USED=$(($MEM_TOTAL - $FREE_MEM)) && ` +
+	`  DISK_DF=$(df -h /System/Volumes/Data 2>/dev/null || df -h /) && ` +
+	`  DISK_TOTAL=$(echo "$DISK_DF" | awk 'NR==2{print $2}') && ` +
+	`  DISK_USED=$(echo "$DISK_DF" | awk 'NR==2{print $3}') && \` +
+	`  DISK_PCT=$(echo "$DISK_DF" | awk 'NR==2{print $5}' | tr -d '%') && ` +
+	`  IP=$(ifconfig 2>/dev/null | grep 'inet ' | grep -v 127.0.0.1 | awk '{print $2}' | head -n 1 || echo unknown) && \` +
+	`  GPU=$(system_profiler SPDisplaysDataType 2>/dev/null | grep 'Chipset Model' | cut -d: -f2 | xargs | head -n 1 || echo unknown); \` +
 	`else ` +
-	`free -m 2>/dev/null | awk '/^Mem:/{print "MEM_TOTAL="$2" MEM_USED="$3}' || echo "MEM_TOTAL=0 MEM_USED=0"; ` +
+	`  MEM_LINE=$(free -m 2>/dev/null | grep '^Mem:') && \` +
+	`  MEM_TOTAL=$(echo "$MEM_LINE" | awk '{print $2}') && \` +
+	`  MEM_USED=$(echo "$MEM_LINE" | awk '{print $3}') && \` +
+	`  DISK_DF=$(df -h / 2>/dev/null) && \` +
+	`  DISK_TOTAL=$(echo "$DISK_DF" | awk 'NR==2{print $2}') && \` +
+	`  DISK_USED=$(echo "$DISK_DF" | awk 'NR==2{print $3}') && \` +
+	`  DISK_PCT=$(echo "$DISK_DF" | awk 'NR==2{print $5}' | tr -d '%') && \` +
+	`  IP=$(hostname -I 2>/dev/null | awk '{print $1}') && \` +
+	`  if [ -z "$IP" ]; then IP=$(ip addr 2>/dev/null | grep 'inet ' | grep -v 127.0.0.1 | awk '{print $2}' | cut -d/ -f1 | head -n 1 || echo unknown); fi && \` +
+	`  GPU=$(lspci 2>/dev/null | grep -i -E 'vga|3d|2d' | cut -d: -f3 | xargs | head -n 1 || nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n 1 || echo unknown); \` +
 	`fi && ` +
-	`df -h / 2>/dev/null | awk 'NR==2{print "DISK_TOTAL="$2" DISK_USED="$3" DISK_PCT="$5}' | tr -d '%' || echo "DISK_TOTAL=0 DISK_USED=0 DISK_PCT=0" && ` +
-	`echo "IP=$(hostname -I 2>/dev/null | awk '{print $1}' || ifconfig 2>/dev/null | grep 'inet ' | grep -v 127.0.0.1 | awk '{print $2}' | head -n 1 || echo unknown)" && ` +
-	`echo "GPU=$(system_profiler SPDisplaysDataType 2>/dev/null | grep 'Chipset Model' | cut -d: -f2 | xargs | head -n 1 || lspci 2>/dev/null | grep -i -E 'vga|3d|2d' | cut -d: -f3 | xargs | head -n 1 || nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n 1 || echo unknown)"`
+	`echo "HOSTNAME=$HOSTNAME" && ` +
+	`echo "OS=$OS" && ` +
+	`echo "KERNEL=$KERNEL" && \` +
+	`echo "UPTIME=$UPTIME" && \` +
+	`echo "CPU=$CPU" && \` +
+	`echo "CORES=$CORES" && \` +
+	`echo "LOAD=$LOAD" && \` +
+	`echo "MEM_TOTAL=$MEM_TOTAL" && \` +
+	`echo "MEM_USED=$MEM_USED" && \` +
+	`echo "DISK_TOTAL=$DISK_TOTAL" && \` +
+	`echo "DISK_USED=$DISK_USED" && \` +
+	`echo "DISK_PCT=$DISK_PCT" && \` +
+	`echo "IP=$IP" && \` +
+	`echo "GPU=$GPU"`
 
 // collectSysInfo connects via an existing SSH client and collects system info.
 // Returns the data or an error; does not write to DB.

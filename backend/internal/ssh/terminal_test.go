@@ -173,6 +173,7 @@ func (s *fakeSSHSession) WindowChange(rows, cols int) error {
 	return nil
 }
 func (s *fakeSSHSession) Close() error { return nil }
+func (s *fakeSSHSession) Setenv(name, value string) error { return nil }
 
 func (s *fakeSSHSession) recordedResizes() []windowSizeRecord {
 	s.mu.Lock()

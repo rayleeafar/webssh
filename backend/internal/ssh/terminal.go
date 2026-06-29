@@ -3,6 +3,7 @@ package ssh
 import (
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -39,6 +40,7 @@ type sshSession interface {
 	StdoutPipe() (io.Reader, error)
 	StderrPipe() (io.Reader, error)
 	WindowChange(h, w int) error
+	Setenv(name, value string) error
 	Close() error
 }
 
@@ -71,6 +73,7 @@ type TerminalSession struct {
 	NodeID     int
 	UserID     int
 	Host       string
+	NodeName   string
 	db         *sql.DB
 	decKey     []byte
 
@@ -442,6 +445,8 @@ func (s *TerminalSession) attemptReconnect() error {
 		return fmt.Errorf("request pty: %w", err)
 	}
 
+	_ = session.Setenv("TERM_PROGRAM", "Apple_Terminal")
+
 	if err := session.Shell(); err != nil {
 		session.Close()
 		client.Close()
@@ -608,14 +613,14 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 	}
 
 	// 2. Resolve Node details
-	var host, username, encryptedCreds, authType string
+	var nodeName, host, username, encryptedCreds, authType string
 	var port, ownerID int
 	var proxyType, proxyHost, proxyUsername string
 	var proxyPort, proxyCredentialID int
 	var jumpProxyType, jumpProxyHost string
 	var jumpProxyPort, jumpProxyCredentialID int
 	err = h.db.QueryRow(`
-		SELECT n.host, n.port, n.username, c.auth_type, c.encrypted_value, n.user_id,
+		SELECT n.name, n.host, n.port, n.username, c.auth_type, c.encrypted_value, n.user_id,
 		       COALESCE(n.proxy_type,''), COALESCE(n.proxy_host,''), COALESCE(n.proxy_port,0),
 		       COALESCE(n.proxy_username,''), COALESCE(n.proxy_credential_id,0),
 		       COALESCE(n.jump_proxy_type,''), COALESCE(n.jump_proxy_host,''),
@@ -623,7 +628,7 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 		FROM nodes n
 		JOIN credentials c ON n.credential_id = c.id
 		WHERE n.id = ?
-	`, nodeID).Scan(&host, &port, &username, &authType, &encryptedCreds, &ownerID,
+	`, nodeID).Scan(&nodeName, &host, &port, &username, &authType, &encryptedCreds, &ownerID,
 		&proxyType, &proxyHost, &proxyPort, &proxyUsername, &proxyCredentialID,
 		&jumpProxyType, &jumpProxyHost, &jumpProxyPort, &jumpProxyCredentialID)
 	if err == sql.ErrNoRows {
@@ -649,12 +654,13 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 	}
 
 	sess := &TerminalSession{
-		ID:     sessionID,
-		NodeID: nodeID,
-		UserID: user.ID,
-		Host:   host,
-		db:     h.db,
-		decKey: key,
+		ID:       sessionID,
+		NodeID:   nodeID,
+		UserID:   user.ID,
+		Host:     host,
+		NodeName: nodeName,
+		db:       h.db,
+		decKey:   key,
 	}
 
 	// 3. Initialize Shell
@@ -667,6 +673,9 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 		if homeDir, err := os.UserHomeDir(); err == nil {
 			cmd.Dir = homeDir
 		}
+
+		// Inherit env and set TERM_PROGRAM to Apple_Terminal to enable OSC 7 CWD reporting on macOS zsh
+		cmd.Env = append(os.Environ(), "TERM_PROGRAM=Apple_Terminal", "TERM=xterm-256color")
 
 		f, err := pty.Start(cmd)
 		if err != nil {
@@ -763,9 +772,10 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 		}
 		if err != nil {
 			log.Printf("SSH connection failed for node %d: %v", nodeID, err)
-			conn, err := upgrader.Upgrade(w, r, nil)
-			if err == nil {
-				_ = conn.WriteMessage(websocket.TextMessage, []byte("SSH connection failed: "+err.Error()+"\r\n"))
+			dialErr := err
+			conn, upgradeErr := upgrader.Upgrade(w, r, nil)
+			if upgradeErr == nil {
+				_ = conn.WriteMessage(websocket.TextMessage, []byte("SSH connection failed: "+dialErr.Error()+"\r\n"))
 				_ = conn.Close()
 			}
 			return
@@ -814,6 +824,8 @@ func (h *TerminalHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request
 			http.Error(w, "Failed to request PTY", http.StatusInternalServerError)
 			return
 		}
+
+		_ = session.Setenv("TERM_PROGRAM", "Apple_Terminal")
 
 		if err := session.Shell(); err != nil {
 			session.Close()
@@ -869,4 +881,41 @@ func (h *TerminalHandler) HandleDeleteSession(w http.ResponseWriter, r *http.Req
 
 	sess.Close()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type SessionInfo struct {
+	ID       string `json:"id"`
+	NodeID   int    `json:"nodeId"`
+	NodeName string `json:"nodeName"`
+	Host     string `json:"host"`
+}
+
+func (h *TerminalHandler) HandleListSessions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	globalSessionManager.mu.RLock()
+	var list []SessionInfo
+	for _, sess := range globalSessionManager.sessions {
+		if sess.UserID == user.ID && !sess.Closed {
+			list = append(list, SessionInfo{
+				ID:       sess.ID,
+				NodeID:   sess.NodeID,
+				NodeName: sess.NodeName,
+				Host:     sess.Host,
+			})
+		}
+	}
+	globalSessionManager.mu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(list) //nolint:errcheck
 }

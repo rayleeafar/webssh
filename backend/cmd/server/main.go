@@ -197,6 +197,7 @@ func main() {
 
 	mux.Handle("/ws/terminal", authMiddleware(http.HandlerFunc(terminalHandler.HandleWebSocket)))
 	mux.Handle("/api/terminal/session", authMiddleware(csrfMiddleware(http.HandlerFunc(terminalHandler.HandleDeleteSession))))
+	mux.Handle("/api/terminal/sessions", authMiddleware(http.HandlerFunc(terminalHandler.HandleListSessions)))
 
 	mux.Handle("/api/batch/exec", authMiddleware(csrfMiddleware(http.HandlerFunc(batchHandler.Exec))))
 
