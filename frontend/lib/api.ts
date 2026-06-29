@@ -116,6 +116,11 @@ export async function getWSTicket(): Promise<string> {
  * backend address (e.g. ws://localhost:8080) to bypass the Next.js proxy.
  */
 export function getWebSocketBase(): string {
+  if (typeof window !== 'undefined' && window.location.port !== '3000') {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${proto}//${window.location.host}`
+  }
+
   const wsUrl = process.env.NEXT_PUBLIC_WS_URL || ''
   if (wsUrl) return wsUrl
 
@@ -123,7 +128,5 @@ export function getWebSocketBase(): string {
   if (apiBase) {
     return apiBase.replace(/^https/, 'wss').replace(/^http/, 'ws')
   }
-  if (typeof window === 'undefined') return 'ws://localhost:8080'
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${proto}//${window.location.host}`
+  return 'ws://localhost:8080'
 }
