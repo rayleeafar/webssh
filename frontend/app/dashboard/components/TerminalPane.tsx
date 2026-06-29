@@ -9,15 +9,22 @@ import { apiGet, getWebSocketBase, setCsrfToken, getWSTicket } from '@/lib/api'
 interface TerminalPaneProps {
   nodeId: number
   active: boolean
+  onCwdChange: (cwd: string) => void
 }
 
-export default function TerminalPane({ nodeId, active }: TerminalPaneProps) {
+export default function TerminalPane({ nodeId, active, onCwdChange }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const roRef = useRef<ResizeObserver | null>(null)
   const initializedRef = useRef(false)
+  const onCwdChangeRef = useRef(onCwdChange)
+
+  // Keep ref updated
+  useEffect(() => {
+    onCwdChangeRef.current = onCwdChange
+  }, [onCwdChange])
 
   // Initialize terminal once on mount
   useEffect(() => {
@@ -43,7 +50,7 @@ export default function TerminalPane({ nodeId, active }: TerminalPaneProps) {
       const term = new Terminal({
         cursorBlink: true,
         fontSize: 13,
-        fontFamily: "'JetBrains Mono', 'Menlo', 'Monaco', 'Courier New', monospace",
+        fontFamily: "'JetBrains Mono', 'Symbols Nerd Font', 'Menlo', 'Monaco', 'Courier New', monospace",
         theme: {
           background: '#050508',
           foreground: '#c8d8f0',
@@ -75,6 +82,38 @@ export default function TerminalPane({ nodeId, active }: TerminalPaneProps) {
       term.loadAddon(fitAddon)
       termRef.current = term
       fitRef.current = fitAddon
+
+      // Register OSC 7 handler to capture working directory changes from the shell
+      term.parser.registerOscHandler(7, (data) => {
+        try {
+          if (data.startsWith('file://')) {
+            const url = new URL(data)
+            const path = decodeURIComponent(url.pathname)
+            if (path) {
+              onCwdChangeRef.current(path)
+            }
+          } else {
+            // Fallback: match file://host/path pattern manually
+            const match = data.match(/file:\/\/[^\/]*(.*)/)
+            if (match && match[1]) {
+              onCwdChangeRef.current(decodeURIComponent(match[1]))
+            } else {
+              // Fallback: use path directly if it looks like an absolute path
+              const idx = data.indexOf('/')
+              if (idx !== -1) {
+                onCwdChangeRef.current(data.substring(idx))
+              }
+            }
+          }
+        } catch (e) {
+          // Fallback: manual parsing
+          const idx = data.indexOf('/')
+          if (idx !== -1) {
+            onCwdChangeRef.current(data.substring(idx))
+          }
+        }
+        return true // Handled
+      })
 
       if (containerRef.current) {
         term.open(containerRef.current)

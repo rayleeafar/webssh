@@ -1,5 +1,10 @@
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 @import 'xterm/css/xterm.css';
+@font-face {
+  font-family: 'Symbols Nerd Font';
+  src: url('https://cdn.jsdelivr.net/gh/Nick2bad4u/nerd-fonts-woff2@v1.0.0/fonts/woff2/SymbolsOnly/SymbolsNerdFont-Regular.woff2') format('woff2');
+  font-display: swap;
+}
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

@@ -19,6 +19,7 @@ interface BottomPanelProps {
   onHeightChange: (h: number) => void
   activeNodeId: number | null
   nodes: Node[]
+  activeTabCwd?: string
 }
 
 export default function BottomPanel({
@@ -28,6 +29,7 @@ export default function BottomPanel({
   onHeightChange,
   activeNodeId,
   nodes,
+  activeTabCwd,
 }: BottomPanelProps) {
   const dragStartY = useRef<number>(0)
   const dragStartH = useRef<number>(0)
@@ -129,35 +131,13 @@ export default function BottomPanel({
             SELECT A NODE AND OPEN A TERMINAL TO USE THIS PANEL
           </div>
         ) : tab === 'sftp' ? (
-          <SFTPBrowser nodeId={activeNodeId} />
+          <SFTPBrowser nodeId={activeNodeId} initialPath={activeTabCwd} />
         ) : (
           <SystemInfo nodeId={activeNodeId} />
         )}
       </div>
 
-      {/* Close button */}
-      <button
-        onClick={onClose}
-        style={{
-          position: 'absolute',
-          top: 8,
-          right: 12,
-          background: 'transparent',
-          border: 'none',
-          color: '#404070',
-          cursor: 'pointer',
-          fontFamily: "'Orbitron', sans-serif",
-          fontSize: 9,
-          letterSpacing: '0.15em',
-          padding: '2px 8px',
-          transition: 'color 0.15s',
-          zIndex: 10,
-        }}
-        onMouseEnter={(e) => { e.currentTarget.style.color = '#ff3060' }}
-        onMouseLeave={(e) => { e.currentTarget.style.color = '#404070' }}
-      >
-        ▼ COLLAPSE
-      </button>
+      {/* Close button removed — collapse is now handled by clicking the tab bar empty space */}
     </div>
   )
 }

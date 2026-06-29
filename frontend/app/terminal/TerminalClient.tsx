@@ -43,7 +43,7 @@ export default function TerminalClient() {
       term = new Terminal({
         cursorBlink: true,
         fontSize: 14,
-        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        fontFamily: "'JetBrains Mono', 'Symbols Nerd Font', 'Menlo', 'Monaco', 'Courier New', monospace",
         theme: { background: '#1e1e1e', foreground: '#d4d4d4' },
       })
 

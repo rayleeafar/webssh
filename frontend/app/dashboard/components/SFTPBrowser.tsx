@@ -13,6 +13,7 @@ interface FileInfo {
 
 interface SFTPBrowserProps {
   nodeId: number | null
+  initialPath?: string
 }
 
 function formatSize(bytes: number): string {
@@ -23,7 +24,7 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
 }
 
-export default function SFTPBrowser({ nodeId }: SFTPBrowserProps) {
+export default function SFTPBrowser({ nodeId, initialPath }: SFTPBrowserProps) {
   const [files, setFiles] = useState<FileInfo[]>([])
   const [currentPath, setCurrentPath] = useState('.')
   const [loading, setLoading] = useState(false)
@@ -56,10 +57,11 @@ export default function SFTPBrowser({ nodeId }: SFTPBrowserProps) {
 
   useEffect(() => {
     if (nodeId) {
-      setCurrentPath('.')
-      fetchFiles('.')
+      const path = initialPath || '.'
+      setCurrentPath(path)
+      fetchFiles(path)
     }
-  }, [nodeId, fetchFiles])
+  }, [nodeId, initialPath, fetchFiles])
 
   const handleNavigate = (name: string, isDir: boolean) => {
     if (!isDir) return

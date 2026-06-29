@@ -20,6 +20,7 @@ interface Tab {
   nodeId: number
   nodeName: string
   host: string
+  cwd?: string
 }
 
 interface Node {
@@ -150,6 +151,11 @@ export default function DashboardPage() {
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null
   const activeNodeId = activeTab?.nodeId ?? null
   const activeNodeIds = new Set(tabs.map((t) => t.nodeId))
+  const activeTabCwd = activeTab?.cwd
+
+  const handleCwdChange = useCallback((tabId: string, cwd: string) => {
+    setTabs(prev => prev.map(t => t.id === tabId ? { ...t, cwd } : t))
+  }, [])
 
   const handleBottomTabClick = (t: 'sftp' | 'sysinfo' | 'batch') => {
     setBottomTab((prev) => (prev === t ? null : t))
@@ -226,6 +232,7 @@ export default function DashboardPage() {
                 key={tab.id}
                 nodeId={tab.nodeId}
                 active={tab.id === activeTabId}
+                onCwdChange={(cwd) => handleCwdChange(tab.id, cwd)}
               />
             ))}
           </div>
@@ -240,6 +247,7 @@ export default function DashboardPage() {
               onHeightChange={setBottomHeight}
               activeNodeId={activeNodeId}
               nodes={nodes}
+              activeTabCwd={activeTabCwd}
             />
           )}
 
@@ -247,6 +255,7 @@ export default function DashboardPage() {
           <BottomTabBar
             activeTab={bottomTab}
             onTabClick={handleBottomTabClick}
+            onCollapse={() => setBottomTab(null)}
           />
         </div>
       </div>

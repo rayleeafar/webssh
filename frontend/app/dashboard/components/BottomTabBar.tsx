@@ -3,9 +3,10 @@
 interface BottomTabBarProps {
   activeTab: 'sftp' | 'sysinfo' | 'batch' | null
   onTabClick: (tab: 'sftp' | 'sysinfo' | 'batch') => void
+  onCollapse: () => void
 }
 
-export default function BottomTabBar({ activeTab, onTabClick }: BottomTabBarProps) {
+export default function BottomTabBar({ activeTab, onTabClick, onCollapse }: BottomTabBarProps) {
   const tabs: { id: 'sftp' | 'sysinfo' | 'batch'; label: string }[] = [
     { id: 'sftp', label: 'SFTP' },
     { id: 'sysinfo', label: 'SYSINFO' },
@@ -14,6 +15,11 @@ export default function BottomTabBar({ activeTab, onTabClick }: BottomTabBarProp
 
   return (
     <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget && activeTab) {
+          onCollapse()
+        }
+      }}
       style={{
         height: 32,
         background: '#080810',
@@ -60,8 +66,16 @@ export default function BottomTabBar({ activeTab, onTabClick }: BottomTabBarProp
           </button>
         )
       })}
-      {/* Spacer */}
-      <div style={{ flex: 1 }} />
+      {/* Spacer — clicking here collapses the active panel */}
+      <div
+        onClick={() => {
+          if (activeTab) onCollapse()
+        }}
+        style={{
+          flex: 1,
+          cursor: activeTab ? 'pointer' : 'default',
+        }}
+      />
     </div>
   )
 }
