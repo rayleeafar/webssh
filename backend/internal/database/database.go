@@ -339,7 +339,36 @@ func migrateNodeSysInfo(db *sql.DB) error {
 			FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
 		)
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Add gpu_model column if missing
+	rows, err := db.Query("PRAGMA table_info(node_sysinfo)")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	hasGPU := false
+	for rows.Next() {
+		var cid int
+		var name, typeStr string
+		var notNull, pk int
+		var dfltVal *string
+		if err := rows.Scan(&cid, &name, &typeStr, &notNull, &dfltVal, &pk); err != nil {
+			return err
+		}
+		if name == "gpu_model" {
+			hasGPU = true
+		}
+	}
+	if !hasGPU {
+		_, err = db.Exec("ALTER TABLE node_sysinfo ADD COLUMN gpu_model TEXT NOT NULL DEFAULT ''")
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func migrateTOTP(db *sql.DB) error {

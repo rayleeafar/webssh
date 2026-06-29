@@ -7,12 +7,13 @@ import 'xterm/css/xterm.css'
 import { apiGet, getWebSocketBase, setCsrfToken, getWSTicket } from '@/lib/api'
 
 interface TerminalPaneProps {
+  tabId: string
   nodeId: number
   active: boolean
   onCwdChange: (cwd: string) => void
 }
 
-export default function TerminalPane({ nodeId, active, onCwdChange }: TerminalPaneProps) {
+export default function TerminalPane({ tabId, nodeId, active, onCwdChange }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -50,7 +51,7 @@ export default function TerminalPane({ nodeId, active, onCwdChange }: TerminalPa
       const term = new Terminal({
         cursorBlink: true,
         fontSize: 13,
-        fontFamily: "'JetBrains Mono', 'Symbols Nerd Font', 'Menlo', 'Monaco', 'Courier New', monospace",
+        fontFamily: "'MesloLGS NF', 'Meslo LGS NF', 'MesloLGS Nerd Font', 'JetBrainsMono Nerd Font', 'JetBrains Mono Nerd Font', 'FiraCode Nerd Font', 'Fira Code Nerd Font', 'Hack Nerd Font', 'Symbols Nerd Font Mono', 'JetBrains Mono', 'Menlo', 'Monaco', 'Courier New', monospace",
         theme: {
           background: '#050508',
           foreground: '#c8d8f0',
@@ -124,7 +125,7 @@ export default function TerminalPane({ nodeId, active, onCwdChange }: TerminalPa
 
       const ticket = await getWSTicket()
       const wsBase = getWebSocketBase()
-      const ws = new WebSocket(`${wsBase}/ws/terminal?nodeId=${nodeId}&ticket=${encodeURIComponent(ticket)}`)
+      const ws = new WebSocket(`${wsBase}/ws/terminal?nodeId=${nodeId}&sessionId=${tabId}&ticket=${encodeURIComponent(ticket)}`)
       ws.binaryType = 'arraybuffer'
       wsRef.current = ws
 

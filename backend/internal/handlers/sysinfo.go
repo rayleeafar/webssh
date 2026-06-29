@@ -37,6 +37,7 @@ type SysInfoResponse struct {
 	DiskUsed  string `json:"disk_used"`
 	DiskPct   string `json:"disk_pct"`
 	IPAddr    string `json:"ip_addr"`
+	GPUModel  string `json:"gpu_model"`
 	Stale     bool   `json:"stale,omitempty"`
 }
 
@@ -48,9 +49,20 @@ const sysInfoShellCmd = `echo "HOSTNAME=$(hostname)" && ` +
 	`echo "CPU=$(cat /proc/cpuinfo 2>/dev/null | grep 'model name' | head -1 | cut -d: -f2 | xargs || sysctl -n machdep.cpu.brand_string 2>/dev/null || echo unknown)" && ` +
 	`echo "CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 0)" && ` +
 	`echo "LOAD=$(cat /proc/loadavg 2>/dev/null | awk '{print $1" "$2" "$3}' || sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | xargs || echo 0)" && ` +
-	`free -m 2>/dev/null | awk '/^Mem:/{print "MEM_TOTAL="$2" MEM_USED="$3}' || echo "MEM_TOTAL=0 MEM_USED=0" && ` +
-	`df -h / 2>/dev/null | awk 'NR==2{print "DISK_TOTAL="$2" DISK_USED="$3" DISK_PCT="$5}' || echo "DISK_TOTAL=0 DISK_USED=0 DISK_PCT=0" && ` +
-	`echo "IP=$(hostname -I 2>/dev/null | awk '{print $1}' || ipconfig getifaddr en0 2>/dev/null || echo unknown)"`
+	`if [ "$(uname)" = "Darwin" ]; then ` +
+	`MEM_TOTAL=$(($(sysctl -n hw.memsize) / 1024 / 1024)) && ` +
+	`PAGESIZE=$(sysctl -n hw.pagesize) && ` +
+	`FREE_PAGES=$(vm_stat | grep "Pages free:" | awk '{print $3}' | tr -d '.') && ` +
+	`SPEC_PAGES=$(vm_stat | grep "Pages speculative:" | awk '{print $3}' | tr -d '.') && ` +
+	`FREE_MEM=$((($FREE_PAGES + $SPEC_PAGES) * $PAGESIZE / 1024 / 1024)) && ` +
+	`MEM_USED=$(($MEM_TOTAL - $FREE_MEM)) && ` +
+	`echo "MEM_TOTAL=$MEM_TOTAL MEM_USED=$MEM_USED"; ` +
+	`else ` +
+	`free -m 2>/dev/null | awk '/^Mem:/{print "MEM_TOTAL="$2" MEM_USED="$3}' || echo "MEM_TOTAL=0 MEM_USED=0"; ` +
+	`fi && ` +
+	`df -h / 2>/dev/null | awk 'NR==2{print "DISK_TOTAL="$2" DISK_USED="$3" DISK_PCT="$5}' | tr -d '%' || echo "DISK_TOTAL=0 DISK_USED=0 DISK_PCT=0" && ` +
+	`echo "IP=$(hostname -I 2>/dev/null | awk '{print $1}' || ifconfig 2>/dev/null | grep 'inet ' | grep -v 127.0.0.1 | awk '{print $2}' | head -n 1 || echo unknown)" && ` +
+	`echo "GPU=$(system_profiler SPDisplaysDataType 2>/dev/null | grep 'Chipset Model' | cut -d: -f2 | xargs | head -n 1 || lspci 2>/dev/null | grep -i -E 'vga|3d|2d' | cut -d: -f3 | xargs | head -n 1 || nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n 1 || echo unknown)"`
 
 // collectSysInfo connects via an existing SSH client and collects system info.
 // Returns the data or an error; does not write to DB.
@@ -162,14 +174,14 @@ func collectAndStoreSysInfo(db *sql.DB, nodeID int, routing *nodeSSHRouting) {
 		if _, err := db.Exec(`
 			INSERT OR REPLACE INTO node_sysinfo
 				(node_id, hostname, os, kernel, uptime, cpu_model, cpu_cores, load_avg,
-				 mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr, collected_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+				 mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr, gpu_model, collected_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
 			nodeID,
 			info.Hostname, info.OS, info.Kernel, info.Uptime,
 			info.CPUModel, info.CPUCores, info.LoadAvg,
 			info.MemTotal, info.MemUsed,
 			info.DiskTotal, info.DiskUsed, info.DiskPct,
-			info.IPAddr,
+			info.IPAddr, info.GPUModel,
 		); err != nil {
 			log.Printf("sysinfo collect node %d (local): persist: %v", nodeID, err)
 		}
@@ -192,14 +204,14 @@ func collectAndStoreSysInfo(db *sql.DB, nodeID int, routing *nodeSSHRouting) {
 	if _, err := db.Exec(`
 		INSERT OR REPLACE INTO node_sysinfo
 			(node_id, hostname, os, kernel, uptime, cpu_model, cpu_cores, load_avg,
-			 mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr, collected_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+			 mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr, gpu_model, collected_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
 		nodeID,
 		info.Hostname, info.OS, info.Kernel, info.Uptime,
 		info.CPUModel, info.CPUCores, info.LoadAvg,
 		info.MemTotal, info.MemUsed,
 		info.DiskTotal, info.DiskUsed, info.DiskPct,
-		info.IPAddr,
+		info.IPAddr, info.GPUModel,
 	); err != nil {
 		log.Printf("sysinfo collect node %d: persist: %v", nodeID, err)
 	}
@@ -250,14 +262,14 @@ func (h *SysInfoHandler) Get(w http.ResponseWriter, r *http.Request) {
 	var cachedRow SysInfoResponse
 	scanErr := h.db.QueryRow(`
 		SELECT hostname, os, kernel, uptime, cpu_model, cpu_cores, load_avg,
-		       mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr
+		       mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr, gpu_model
 		FROM node_sysinfo
 		WHERE node_id = ?`, nodeID).Scan(
 		&cachedRow.Hostname, &cachedRow.OS, &cachedRow.Kernel, &cachedRow.Uptime,
 		&cachedRow.CPUModel, &cachedRow.CPUCores, &cachedRow.LoadAvg,
 		&cachedRow.MemTotal, &cachedRow.MemUsed,
 		&cachedRow.DiskTotal, &cachedRow.DiskUsed, &cachedRow.DiskPct,
-		&cachedRow.IPAddr,
+		&cachedRow.IPAddr, &cachedRow.GPUModel,
 	)
 	if scanErr == nil {
 		cached = &cachedRow
@@ -280,14 +292,14 @@ func (h *SysInfoHandler) Get(w http.ResponseWriter, r *http.Request) {
 		_, dbErr := h.db.Exec(`
 			INSERT OR REPLACE INTO node_sysinfo
 				(node_id, hostname, os, kernel, uptime, cpu_model, cpu_cores, load_avg,
-				 mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr, collected_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+				 mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr, gpu_model, collected_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
 			nodeID,
 			info.Hostname, info.OS, info.Kernel, info.Uptime,
 			info.CPUModel, info.CPUCores, info.LoadAvg,
 			info.MemTotal, info.MemUsed,
 			info.DiskTotal, info.DiskUsed, info.DiskPct,
-			info.IPAddr,
+			info.IPAddr, info.GPUModel,
 		)
 		if dbErr != nil {
 			log.Printf("sysinfo Get (local): persist refreshed sysinfo for node %d: %v", nodeID, dbErr)
@@ -360,14 +372,14 @@ func (h *SysInfoHandler) Get(w http.ResponseWriter, r *http.Request) {
 	_, dbErr := h.db.Exec(`
 		INSERT OR REPLACE INTO node_sysinfo
 			(node_id, hostname, os, kernel, uptime, cpu_model, cpu_cores, load_avg,
-			 mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr, collected_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+			 mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr, gpu_model, collected_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
 		nodeID,
 		info.Hostname, info.OS, info.Kernel, info.Uptime,
 		info.CPUModel, info.CPUCores, info.LoadAvg,
 		info.MemTotal, info.MemUsed,
 		info.DiskTotal, info.DiskUsed, info.DiskPct,
-		info.IPAddr,
+		info.IPAddr, info.GPUModel,
 	)
 	if dbErr != nil {
 		log.Printf("sysinfo Get: persist refreshed sysinfo for node %d: %v", nodeID, dbErr)
@@ -419,12 +431,12 @@ func (h *SysInfoHandler) GetCached(w http.ResponseWriter, r *http.Request) {
 	var cached SysInfoResponse
 	err = h.db.QueryRow(`
 		SELECT hostname, os, kernel, uptime, cpu_model, cpu_cores, load_avg,
-		       mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr
+		       mem_total, mem_used, disk_total, disk_used, disk_pct, ip_addr, gpu_model
 		FROM node_sysinfo WHERE node_id = ?`, nodeID).Scan(
 		&cached.Hostname, &cached.OS, &cached.Kernel, &cached.Uptime,
 		&cached.CPUModel, &cached.CPUCores, &cached.LoadAvg,
 		&cached.MemTotal, &cached.MemUsed,
-		&cached.DiskTotal, &cached.DiskUsed, &cached.DiskPct, &cached.IPAddr,
+		&cached.DiskTotal, &cached.DiskUsed, &cached.DiskPct, &cached.IPAddr, &cached.GPUModel,
 	)
 	if err == sql.ErrNoRows {
 		http.Error(w, "No cached data", http.StatusNotFound)
@@ -466,5 +478,7 @@ func parseSysInfoKV(info *SysInfoResponse, k, v string) {
 		info.DiskPct = v
 	case "IP":
 		info.IPAddr = v
+	case "GPU":
+		info.GPUModel = v
 	}
 }

@@ -17,6 +17,7 @@ interface SysInfoData {
   disk_used: string
   disk_pct: string
   ip_addr: string
+  gpu_model: string
   stale?: boolean
 }
 
@@ -342,6 +343,7 @@ export default function SystemInfo({ nodeId }: SystemInfoProps) {
             <InfoCard label="OS" value={data.os} />
             <InfoCard label="KERNEL" value={data.kernel} />
             <InfoCard label="UPTIME" value={data.uptime} color="#00ff88" />
+            <InfoCard label="GPU" value={data.gpu_model} color="#ffaa00" />
           </div>
 
           {/* CPU section */}

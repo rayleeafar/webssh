@@ -230,6 +230,7 @@ export default function DashboardPage() {
             {tabs.map((tab) => (
               <TerminalPane
                 key={tab.id}
+                tabId={tab.id}
                 nodeId={tab.nodeId}
                 active={tab.id === activeTabId}
                 onCwdChange={(cwd) => handleCwdChange(tab.id, cwd)}

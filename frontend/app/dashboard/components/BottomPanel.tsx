@@ -39,9 +39,13 @@ export default function BottomPanel({
       e.preventDefault()
       dragStartY.current = e.clientY
       dragStartH.current = height
+      let hasDragged = false
 
       const onMouseMove = (ev: MouseEvent) => {
         const delta = dragStartY.current - ev.clientY
+        if (Math.abs(delta) > 3) {
+          hasDragged = true
+        }
         const newH = Math.max(100, Math.min(600, dragStartH.current + delta))
         onHeightChange(newH)
       }
@@ -49,12 +53,15 @@ export default function BottomPanel({
       const onMouseUp = () => {
         document.removeEventListener('mousemove', onMouseMove)
         document.removeEventListener('mouseup', onMouseUp)
+        if (!hasDragged) {
+          onClose()
+        }
       }
 
       document.addEventListener('mousemove', onMouseMove)
       document.addEventListener('mouseup', onMouseUp)
     },
-    [height, onHeightChange]
+    [height, onHeightChange, onClose]
   )
 
   return (
